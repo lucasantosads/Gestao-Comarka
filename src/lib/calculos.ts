@@ -1,0 +1,111 @@
+import { startOfMonth, endOfMonth, isWeekend, eachDayOfInterval } from "date-fns";
+
+export interface CloserStats {
+  reunioes_marcadas: number;
+  reunioes_feitas: number;
+  contratos: number;
+  meta_contratos: number;
+  ticket_medio: number;
+  ticket_meta: number;
+}
+
+export interface ScoreDetalhe {
+  label: string;
+  pontos: number;
+  peso: string;
+}
+
+export function calcularScore(stats: CloserStats) {
+  const safe = (n: number, d: number) => (d > 0 ? n / d : 0);
+
+  // 1. Taxa de Conversão (base 35%)
+  const taxaConv = safe(stats.contratos, stats.reunioes_feitas) * 100;
+  const convScore = taxaConv >= 25 ? 100 : taxaConv >= 20 ? 85 : taxaConv >= 15 ? 65 : taxaConv >= 10 ? 40 : 15;
+
+  // 2. Atingimento de Meta (base 30%) — ignorado se meta = 0
+  const metaAtiva = stats.meta_contratos > 0;
+  const pctMeta = safe(stats.contratos, stats.meta_contratos) * 100;
+  const metaScore = pctMeta >= 100 ? 100 : pctMeta >= 70 ? 70 : pctMeta >= 50 ? 40 : 10;
+
+  // 3. Ticket Médio vs Ticket Meta (base 20%)
+  const pctTicket = safe(stats.ticket_medio, stats.ticket_meta) * 100;
+  const ticketScore = pctTicket >= 100 ? 100 : pctTicket >= 80 ? 75 : pctTicket >= 60 ? 50 : 20;
+
+  // 4. Taxa de Aproveitamento de Agendamentos (base 15%)
+  const pctAprov = safe(stats.reunioes_feitas, stats.reunioes_marcadas) * 100;
+  const aprovScore = pctAprov >= 80 ? 100 : pctAprov >= 60 ? 70 : pctAprov >= 40 ? 40 : 15;
+
+  // Pesos — se meta não configurada, redistribui proporcionalmente
+  let wConv = 0.35, wMeta = 0.30, wTicket = 0.20, wAprov = 0.15;
+  if (!metaAtiva) {
+    const total = wConv + wTicket + wAprov;
+    wConv = wConv / total;
+    wTicket = wTicket / total;
+    wAprov = wAprov / total;
+    wMeta = 0;
+  }
+
+  const score = Math.round(convScore * wConv + metaScore * wMeta + ticketScore * wTicket + aprovScore * wAprov);
+
+  const detalhes: ScoreDetalhe[] = [
+    { label: "Taxa de conversão", pontos: convScore, peso: `${Math.round(wConv * 100)}%` },
+  ];
+  if (metaAtiva) {
+    detalhes.push({ label: "Atingimento de meta", pontos: metaScore, peso: `${Math.round(wMeta * 100)}%` });
+  }
+  detalhes.push(
+    { label: "Ticket vs meta", pontos: ticketScore, peso: `${Math.round(wTicket * 100)}%` },
+    { label: "Aproveitamento", pontos: aprovScore, peso: `${Math.round(wAprov * 100)}%` },
+  );
+
+  return {
+    score,
+    status: (score >= 70 ? "saudavel" : score >= 45 ? "atencao" : "critico") as "saudavel" | "atencao" | "critico",
+    detalhes,
+  };
+}
+
+export function getDiasUteisDoMes(mesRef: string): number {
+  const [year, month] = mesRef.split("-").map(Number);
+  const start = startOfMonth(new Date(year, month - 1, 1));
+  const end = endOfMonth(start);
+  const days = eachDayOfInterval({ start, end });
+  return days.filter((d) => !isWeekend(d)).length;
+}
+
+export function getDiasUteisAte(mesRef: string, ate: Date): number {
+  const [year, month] = mesRef.split("-").map(Number);
+  const start = startOfMonth(new Date(year, month - 1, 1));
+  const end = ate < endOfMonth(start) ? ate : endOfMonth(start);
+  const days = eachDayOfInterval({ start, end });
+  return days.filter((d) => !isWeekend(d)).length;
+}
+
+export function calcularMetaReversa(inputs: {
+  mrrAlvo: number;
+  taxaConv: number;
+  taxaNoShow: number;
+  ticketMedio: number;
+  diasUteis: number;
+  closers: number;
+  ritmoAtual: number;
+}) {
+  const { mrrAlvo, taxaConv, taxaNoShow, ticketMedio, diasUteis, closers, ritmoAtual } = inputs;
+  const contratos = Math.ceil(mrrAlvo / ticketMedio);
+  const reunioesFeitas = Math.ceil(contratos / (taxaConv / 100));
+  const reunioesMarcadas = Math.ceil(reunioesFeitas / (1 - taxaNoShow / 100));
+  const leadsNecessarios = Math.ceil(reunioesMarcadas / 0.25);
+  const contratosPerCloser = contratos / closers;
+  const reunioesPerCloser = reunioesFeitas / closers;
+  const contratosPerDia = diasUteis > 0 ? contratos / diasUteis : 0;
+  const reunioesPerDia = diasUteis > 0 ? reunioesMarcadas / diasUteis : 0;
+  const deltaRitmo = ritmoAtual > 0 ? ((contratosPerDia - ritmoAtual) / ritmoAtual) * 100 : 100;
+  const viabilidade = deltaRitmo <= 10 ? "viavel" : deltaRitmo <= 40 ? "desafiador" : "fora_do_alcance";
+
+  return {
+    contratos, reunioesFeitas, reunioesMarcadas, leadsNecessarios,
+    contratosPerCloser, reunioesPerCloser, contratosPerDia, reunioesPerDia,
+    viabilidade: viabilidade as "viavel" | "desafiador" | "fora_do_alcance",
+    deltaRitmo,
+  };
+}
