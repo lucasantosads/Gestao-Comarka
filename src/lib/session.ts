@@ -15,7 +15,7 @@ export interface SessionPayload {
 
 // Super-admin: único usuário com controle total sobre todos (inclusive admins/diretores/heads).
 // Fixo, não configurável pela UI.
-export const SUPER_ADMIN_USUARIO = "lucas";
+export const SUPER_ADMIN_USUARIO = "lucasantos";
 
 export function isSuperAdmin(session: SessionPayload | null): boolean {
   return !!session && session.usuario === SUPER_ADMIN_USUARIO;
