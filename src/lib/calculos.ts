@@ -109,3 +109,24 @@ export function calcularMetaReversa(inputs: {
     deltaRitmo,
   };
 }
+
+/**
+ * Calcula o valor_total_projeto (LTV) de um contrato/lead respeitando o flag
+ * entrada_e_primeiro_mes. Usar este helper em TODOS os lugares que precisam
+ * derivar o total — garante consistência com a fórmula definida em /lancamento.
+ *
+ *   true  → entrada + mrr × (meses - 1)    (entrada já é o 1° mês)
+ *   false → entrada + mrr × meses          (entrada separada do recorrente)
+ */
+export function calcValorTotalProjeto(args: {
+  valor_entrada: number;
+  mrr: number;
+  meses: number;
+  entrada_e_primeiro_mes?: boolean;
+}): number {
+  const ent = Number(args.valor_entrada || 0);
+  const mrr = Number(args.mrr || 0);
+  const meses = Math.max(0, Number(args.meses || 0));
+  const primeiro = args.entrada_e_primeiro_mes ?? true;
+  return primeiro ? ent + mrr * Math.max(0, meses - 1) : ent + mrr * meses;
+}

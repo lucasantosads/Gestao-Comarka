@@ -46,6 +46,13 @@ export interface Contrato {
   meses_contrato: number;
   mrr: number;
   valor_total_projeto: number;
+  /**
+   * Quando true (padrão), a entrada cobrada É o primeiro mês do contrato —
+   * não é um valor adicional. Afeta o cálculo de valor_total_projeto:
+   *   true  → valor_entrada + mrr × (meses_contrato - 1)
+   *   false → valor_entrada + mrr × meses_contrato
+   */
+  entrada_e_primeiro_mes: boolean;
   data_fechamento: string;
   obs: string | null;
   created_at: string;
@@ -56,6 +63,20 @@ export interface ConfigMensal {
   mes_referencia: string;
   leads_totais: number;
   investimento: number;
+  funil_lead_para_qualificado: number | null;
+  funil_lead_para_qualificado_manual: boolean;
+  funil_qualificado_para_reuniao: number | null;
+  funil_qualificado_para_reuniao_manual: boolean;
+  funil_reuniao_para_proposta: number | null;
+  funil_reuniao_para_proposta_manual: boolean;
+  funil_proposta_para_fechamento: number | null;
+  funil_proposta_para_fechamento_manual: boolean;
+  meta_mrr: number | null;
+  meta_mrr_manual: boolean;
+  meta_contratos: number | null;
+  meta_contratos_manual: boolean;
+  noshow_rate: number | null;
+  noshow_rate_manual: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -85,6 +106,8 @@ export interface MetaCloser {
   meta_ltv: number;
   meta_reunioes_feitas: number;
   meta_taxa_no_show: number;
+  meta_sugerida_ia: number | null;
+  meta_sugerida_justificativa: string | null;
 }
 
 export interface LancamentoSdr {
@@ -131,7 +154,7 @@ export interface LeadCrm {
   closer_id: string | null;
   sdr_id: string | null;
   mes_referencia: string | null;
-  etapa: "oportunidade" | "lead_qualificado" | "reuniao_agendada" | "proposta_enviada" | "negociacao" | "follow_up" | "no_show" | "assinatura_contrato" | "comprou" | "desistiu";
+  etapa: "oportunidade" | "lead_qualificado" | "qualificado" | "reuniao_agendada" | "reuniao_feita" | "proposta_enviada" | "negociacao" | "follow_up" | "ligacao" | "no_show" | "remarketing" | "desqualificado" | "assinatura_contrato" | "comprou" | "desistiu";
   data_reuniao_agendada: string | null;
   data_proposta_enviada: string | null;
   data_follow_up: string | null;
@@ -165,6 +188,9 @@ export interface LeadCrm {
   follow_up_2: string | null;
   preenchido_em: string | null;
   lead_id: string | null;
+  /** Data em que a oportunidade foi criada no GHL (fonte de verdade para filtros de período) */
+  ghl_created_at: string | null;
+  /** Data de INSERT no Supabase (não usar para filtros de período) */
   created_at: string;
   updated_at: string;
 }
@@ -229,6 +255,13 @@ export interface AdsMetadata {
   campaign_name: string | null;
   objetivo: string | null;
   status: string;
+  /** Creative fields — optional, populated when DB columns exist */
+  thumbnail_url?: string | null;
+  image_url?: string | null;
+  ad_body?: string | null;
+  ad_title?: string | null;
+  link_url?: string | null;
+  call_to_action_type?: string | null;
   updated_at: string;
 }
 
@@ -271,4 +304,264 @@ export interface LeadStageHistory {
   estagio_anterior: string | null;
   estagio_novo: string;
   alterado_em: string;
+}
+
+// ============ TRÁFEGO EXPANDIDO ============
+
+export interface TrafegoRegraOtimizacao {
+  id: string;
+  nome: string;
+  metrica: "cpl" | "ctr" | "frequencia" | "cpc" | "roas" | "leads_dia" | "spend_dia";
+  operador: ">=" | "<=" | ">" | "<" | "=";
+  threshold: number;
+  acao_sugerida: "pausar_anuncio" | "pausar_conjunto" | "pausar_campanha" | "reduzir_orcamento" | "trocar_criativo" | "revisar_copy" | "revisar_publico";
+  acao_automatica: boolean;
+  prioridade: number;
+  ativo: boolean;
+  criado_por: string | null;
+  criado_em: string;
+}
+
+export interface TrafegoRegraHistorico {
+  id: string;
+  regra_id: string;
+  ad_id: string | null;
+  adset_id: string | null;
+  campaign_id: string | null;
+  cliente_id: string | null;
+  acao: "disparada" | "aplicada" | "ignorada" | "falsa_positiva";
+  valor_metrica_no_momento: number;
+  aplicada_por: string | null;
+  observacao: string | null;
+  criado_em: string;
+}
+
+export interface TrafegoCriativo {
+  id: string;
+  ad_id: string | null;
+  cliente_id: string;
+  nome: string;
+  tipo: "video" | "imagem" | "roteiro";
+  arquivo_url: string | null;
+  copy_texto: string | null;
+  roteiro_texto: string | null;
+  transcricao_status: "pendente" | "processando" | "concluido" | "erro" | "manual";
+  transcricao_texto: string | null;
+  analise_status: "pendente" | "processando" | "concluido" | "erro";
+  analise_resultado: {
+    pontos_fortes: string[];
+    pontos_fracos: string[];
+    score: number;
+    gatilhos_identificados: string[];
+    publico_provavel: string;
+    nicho_juridico: string;
+    sugestoes_copy: {
+      versao: string;
+      headline: string;
+      copy_completo: string;
+      justificativa: string;
+      baseado_em: string;
+    }[];
+    alerta_compliance: string | null;
+  } | null;
+  score_final: number | null;
+  status_veiculacao: "ativo" | "pausado" | "fadigado" | "arquivado";
+  data_inicio_veiculacao: string | null;
+  data_fim_veiculacao: string | null;
+  nicho: string | null;
+  deleted_at: string | null;
+  criado_em: string;
+}
+
+export interface TrafegoCriativoMetricas {
+  id: string;
+  criativo_id: string;
+  mes_referencia: string;
+  cpl: number | null;
+  ctr: number | null;
+  spend: number | null;
+  leads: number | null;
+  impressoes: number | null;
+  frequencia: number | null;
+  score_periodo: number | null;
+  fase_ciclo_vida: "aquecimento" | "pico" | "estavel" | "fadiga" | "encerrado" | null;
+}
+
+export interface TrafegoAnomalia {
+  id: string;
+  ad_id: string | null;
+  adset_id: string | null;
+  campaign_id: string | null;
+  cliente_id: string | null;
+  tipo: "gasto_zerado" | "cpl_dobrou" | "leads_zerados" | "spend_esgotando" | "spend_sobrando" | "performance_queda_brusca";
+  valor_anterior: number | null;
+  valor_atual: number | null;
+  causa_provavel: string | null;
+  resolvida: boolean;
+  resolvida_em: string | null;
+  criado_em: string;
+}
+
+export interface TrafegoPerformanceTemporal {
+  id: string;
+  cliente_id: string;
+  dia_semana: number;
+  hora: number;
+  mes_referencia: string;
+  total_leads: number;
+  cpl_medio: number | null;
+  taxa_qualificacao: number | null;
+  total_spend: number | null;
+  calculado_em: string;
+}
+
+// ============ PROJEÇÕES ============
+
+export interface ProjecaoCenario {
+  id: string;
+  mes_referencia: string;
+  nome: "base" | "otimista" | "pessimista" | "simulacao";
+  orcamento_meta: number | null;
+  noshow_rate: number | null;
+  taxa_qualificacao: number | null;
+  taxa_reuniao: number | null;
+  taxa_fechamento: number | null;
+  closers_ativos: number | null;
+  leads_projetados: number | null;
+  qualificados_projetados: number | null;
+  reunioes_projetadas: number | null;
+  propostas_projetadas: number | null;
+  contratos_projetados: number | null;
+  mrr_projetado: number | null;
+  investimento_projetado: number | null;
+  cac_projetado: number | null;
+  is_simulacao: boolean;
+  criado_em: string;
+}
+
+export interface ProjecaoHistoricoAcuracia {
+  id: string;
+  mes_referencia: string;
+  mrr_projetado: number | null;
+  mrr_realizado: number | null;
+  contratos_projetados: number | null;
+  contratos_realizados: number | null;
+  leads_projetados: number | null;
+  leads_realizados: number | null;
+  acuracia_mrr: number | null;
+  acuracia_contratos: number | null;
+  acuracia_leads: number | null;
+  acuracia_media: number | null;
+  calculado_em: string;
+}
+
+export interface ProjecaoAlerta {
+  id: string;
+  mes_referencia: string;
+  tipo: "meta_inalcancavel" | "gargalo_funil" | "ritmo_insuficiente";
+  mensagem: string | null;
+  deficit: number | null;
+  acoes_sugeridas: string[] | null;
+  visualizado: boolean;
+  criado_em: string;
+}
+
+// ============ CLIENTES EXPANDIDO ============
+
+export interface ClienteStatusHistorico {
+  id: string;
+  cliente_id: string;
+  status_anterior: string | null;
+  status_novo: string;
+  alterado_por: string | null;
+  motivo: string | null;
+  criado_em: string;
+}
+
+export interface ChurnConsistenciaLog {
+  id: string;
+  mes_referencia: string;
+  total_ativos_entrada: number | null;
+  total_ativos_churn: number | null;
+  divergencia: number | null;
+  clientes_divergentes: Record<string, string[]> | null;
+  status: "ok" | "divergencia_detectada";
+  resolvido: boolean;
+  criado_em: string;
+}
+
+// ============ FINANCEIRO EXPANDIDO ============
+
+export interface AsaasPagamento {
+  id: string;
+  asaas_id: string | null;
+  cliente_id: string | null;
+  contrato_id: string | null;
+  descricao: string;
+  valor: number;
+  status: "pending" | "received" | "confirmed" | "overdue" | "refunded";
+  data_vencimento: string;
+  data_pagamento: string | null;
+  tipo: "boleto" | "pix" | "credit_card" | "outros";
+  match_status: "pendente" | "conciliado_auto" | "conciliado_manual" | "sem_match";
+  match_tentativas: number;
+  aprovacao_criacao_status: "aguardando" | "aprovado" | "reprovado" | null;
+  aprovacao_criacao_por: string | null;
+  aprovacao_criacao_em: string | null;
+  aprovacao_recebimento_status: "aguardando" | "aprovado" | "reprovado" | null;
+  aprovacao_recebimento_por: string | null;
+  aprovacao_recebimento_em: string | null;
+  criado_em: string;
+  atualizado_em: string;
+  deleted_at: string | null;
+}
+
+export interface AsaasAuditoria {
+  id: string;
+  pagamento_id: string;
+  acao: "criacao_solicitada" | "criacao_aprovada" | "criacao_reprovada"
+  | "recebimento_solicitado" | "recebimento_aprovado" | "recebimento_reprovado"
+  | "conciliacao_auto" | "conciliacao_manual" | "sem_match";
+  executado_por: string | null;
+  observacao: string | null;
+  ip_sessao: string | null;
+  criado_em: string;
+  deleted_at: string | null;
+}
+
+export interface FinanceiroFluxoCaixa {
+  id: string;
+  mes_referencia: string;
+  cenario: "otimista" | "realista" | "pessimista";
+  receita_projetada: number;
+  custos_projetados: number;
+  resultado_projetado: number;
+  churn_impacto: number;
+  detalhamento: Record<string, unknown>;
+  calculado_em: string;
+  deleted_at: string | null;
+}
+
+export interface FinanceiroMargemCliente {
+  id: string;
+  cliente_id: string;
+  mes_referencia: string;
+  receita: number;
+  custo_midia: number;
+  custo_gestor: number;
+  margem_bruta: number;
+  margem_liquida: number;
+  margem_pct: number;
+  calculado_em: string;
+  deleted_at: string | null;
+}
+
+export interface FinanceiroExportacao {
+  id: string;
+  mes_referencia: string;
+  tipo: "csv" | "pdf";
+  gerado_por: string | null;
+  url: string | null;
+  criado_em: string;
+  deleted_at: string | null;
 }

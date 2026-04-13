@@ -1,67 +1,55 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Sidebar } from "@/components/sidebar";
+import { useState, useEffect } from "react";
+import { Sidebar, menuItems } from "@/components/sidebar";
 import { PageTabs } from "@/components/page-tabs";
+import { PortalShell } from "@/components/portal-shell";
 
-const TAB_CONFIG: Record<string, { href: string; label: string }[]> = {
-  dashboard: [
-    { href: "/dashboard", label: "Visão Geral" },
-    { href: "/hoje", label: "Hoje" },
-    { href: "/relatorio", label: "Relatório Mensal" },
-  ],
-  vendas: [
-    { href: "/crm", label: "CRM" },
-    { href: "/funil-tempo", label: "Funil" },
-    { href: "/analise-dias", label: "Análise por Dias" },
-    { href: "/historico", label: "Histórico" },
-    { href: "/canais", label: "Canais" },
-  ],
-  time: [
-    { href: "/sdr", label: "SDR" },
-    { href: "/closers", label: "Closers" },
-    { href: "/social-selling", label: "Social Selling" },
-  ],
-  trafego: [
-    { href: "/trafego/visao-geral", label: "Visão Geral" },
-    { href: "/trafego/estrutura", label: "Estrutura" },
-    { href: "/trafego/frequencia", label: "Frequência" },
-    { href: "/trafego/video", label: "Vídeo" },
-    { href: "/trafego/alertas", label: "Alertas" },
-  ],
-  financeiro: [
-    { href: "/metas", label: "Metas e Bônus" },
-    { href: "/recebimentos", label: "Recebimentos" },
-    { href: "/lancamento", label: "Lançamento Diário" },
-    { href: "/contratos", label: "Contratos" },
-  ],
-  config: [
-    { href: "/config", label: "Configurações" },
-    { href: "/config/integracoes", label: "Integrações" },
-    { href: "/trafego/relatorio-auto", label: "Relatório Automático" },
-    { href: "/calculadora", label: "Calculadora" },
-  ],
-};
+type Tab = { href: string; label: string };
+const TAB_CONFIG: Record<string, Tab[]> = {};
+const GROUP_BY_ID: Record<string, typeof menuItems[number]> = {};
+for (const item of menuItems) {
+  if (!item.children || item.children.length === 0) continue;
+  const id = item.label.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "-");
+  TAB_CONFIG[id] = item.children.map((c) => ({ href: c.href, label: c.label }));
+  GROUP_BY_ID[id] = item;
+}
+
+function pathMatches(pathname: string, patterns: string[]): boolean {
+  return patterns.some((p) => pathname === p || pathname.startsWith(p + "/") || pathname.startsWith(p + "?"));
+}
 
 function getTabGroup(pathname: string): string | null {
-  for (const [group, tabs] of Object.entries(TAB_CONFIG)) {
-    if (tabs.some((t) => pathname === t.href || pathname.startsWith(t.href + "/"))) {
-      return group;
+  if (pathname.startsWith("/dashboard/team")) {
+    for (const [id, item] of Object.entries(GROUP_BY_ID)) {
+      if (item.label.toLowerCase().includes("time")) return id;
     }
   }
-  if (pathname.startsWith("/closer/") || pathname.startsWith("/dashboard/closers/")) return "time";
-  // Rotas de tráfego que foram unificadas
-  if (["/trafego/anuncios", "/trafego/campanhas", "/trafego/conjuntos", "/trafego/relatorios", "/trafego/funil-cliente"].some((p) => pathname.startsWith(p))) return "trafego";
+  for (const [id, item] of Object.entries(GROUP_BY_ID)) {
+    if (pathMatches(pathname, item.paths)) return id;
+  }
+  for (const [id, tabs] of Object.entries(TAB_CONFIG)) {
+    if (tabs.some((t) => pathname === t.href || pathname.startsWith(t.href + "/"))) return id;
+  }
   return null;
 }
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isPortal = pathname.startsWith("/portal");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  if (isPortal) {
-    return <>{children}</>;
-  }
+  useEffect(() => {
+    const check = () => setSidebarCollapsed(localStorage.getItem("sidebar_collapsed") === "true");
+    check();
+    window.addEventListener("storage", check);
+    const interval = setInterval(check, 500);
+    return () => { window.removeEventListener("storage", check); clearInterval(interval); };
+  }, []);
+
+  if (pathname === "/tv") return <>{children}</>;
+  if (isPortal) return <PortalShell>{children}</PortalShell>;
 
   const tabGroup = getTabGroup(pathname);
   const tabs = tabGroup ? TAB_CONFIG[tabGroup] : null;
@@ -69,7 +57,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <Sidebar />
-      <main className="md:ml-56 min-h-screen p-4 md:p-8 pt-16 md:pt-8">
+      <main className={`min-h-screen radial-gradient-bg p-5 md:p-8 pt-16 md:pt-8 transition-all duration-300 ${sidebarCollapsed ? "md:ml-14" : "md:ml-56"}`}>
         {tabs && <PageTabs tabs={tabs} />}
         {children}
       </main>

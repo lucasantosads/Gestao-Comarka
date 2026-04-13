@@ -28,6 +28,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
+import { Save } from "lucide-react";
 
 // Progress bar
 function ProgressBar({ label, current, target, format = "number", inverse = false }: {
@@ -184,6 +188,13 @@ export default function CloserPage() {
         <MonthSelector value={mes} onChange={setMes} />
       </div>
 
+      {/* Lançamento do Dia — alimenta lancamentos_diarios (fonte única para todas as áreas) */}
+      <LancamentoDoDia
+        closerId={String(id)}
+        lancamentos={lancamentos}
+        onSaved={loadData}
+      />
+
       {/* KPI Grid */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
         {cards.map((c) => (
@@ -310,5 +321,106 @@ export default function CloserPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// =====================================================================
+// LancamentoDoDia — formulário inline para editar reuniões marcadas/feitas
+// do dia. UPSERT em lancamentos_diarios (unique closer_id+data). Esta é a
+// fonte única consumida por /closer, /sdr, /historico, /relatorio,
+// /analise-dias, /hoje, /dashboard/team/[id], etc.
+// =====================================================================
+function LancamentoDoDia({
+  closerId,
+  lancamentos,
+  onSaved,
+}: {
+  closerId: string;
+  lancamentos: LancamentoDiario[];
+  onSaved: () => void;
+}) {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const [data, setData] = useState(hoje);
+  const [marcadas, setMarcadas] = useState("0");
+  const [feitas, setFeitas] = useState("0");
+  const [saving, setSaving] = useState(false);
+
+  // Pré-preenche com o valor existente do dia escolhido
+  useEffect(() => {
+    const existing = lancamentos.find((l) => l.data === data);
+    setMarcadas(String(existing?.reunioes_marcadas ?? 0));
+    setFeitas(String(existing?.reunioes_feitas ?? 0));
+  }, [data, lancamentos]);
+
+  const salvar = async () => {
+    const m = Number(marcadas) || 0;
+    const f = Number(feitas) || 0;
+    if (f > m) { toast.error("Reuniões feitas não podem exceder marcadas"); return; }
+    setSaving(true);
+    // Preserva campos existentes (ganhos, mrr_dia, ltv) se já houver lançamento
+    const existing = lancamentos.find((l) => l.data === data);
+    const payload = {
+      closer_id: closerId,
+      data,
+      reunioes_marcadas: m,
+      reunioes_feitas: f,
+      ganhos: existing?.ganhos ?? 0,
+      mrr_dia: existing?.mrr_dia ?? 0,
+      ltv: existing?.ltv ?? 0,
+    };
+    const { error } = await supabase
+      .from("lancamentos_diarios")
+      .upsert(payload, { onConflict: "closer_id,data" });
+    setSaving(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Lançamento salvo");
+    onSaved();
+  };
+
+  const existing = lancamentos.find((l) => l.data === data);
+
+  return (
+    <Card className="border-blue-500/20">
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          📅 Lançamento do Dia
+          {existing && <Badge variant="outline" className="text-[9px]">editando lançamento existente</Badge>}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+          <div>
+            <label className="text-[10px] uppercase text-muted-foreground">Data</label>
+            <Input type="date" value={data} onChange={(e) => setData(e.target.value)} className="text-xs mt-1" />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase text-muted-foreground">Reuniões Agendadas</label>
+            <Input
+              type="number"
+              min={0}
+              value={marcadas}
+              onChange={(e) => setMarcadas(e.target.value)}
+              className="text-xs mt-1 font-mono"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase text-muted-foreground">Reuniões Feitas</label>
+            <Input
+              type="number"
+              min={0}
+              value={feitas}
+              onChange={(e) => setFeitas(e.target.value)}
+              className="text-xs mt-1 font-mono"
+            />
+          </div>
+          <Button size="sm" onClick={salvar} disabled={saving}>
+            <Save size={12} className="mr-1" /> {saving ? "Salvando..." : "Salvar"}
+          </Button>
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-2">
+          Atualiza <code>lancamentos_diarios</code> (chave única <code>closer_id + data</code>). Alimenta automaticamente todas as páginas que usam essa fonte: /closers, /sdr, /historico, /relatorio, /hoje, /dashboard/team/[id] e demais áreas.
+        </p>
+      </CardContent>
+    </Card>
   );
 }

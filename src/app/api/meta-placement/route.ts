@@ -12,6 +12,8 @@ import { calculateMetrics } from "@/lib/video-metrics";
 import { mapToPlacementGroup } from "@/lib/placement";
 import type { RawMetaInsight, CalculatedMetrics, PlacementGroup } from "@/lib/types/metaVideo";
 
+export const revalidate = 120; // Meta Ads data
+
 const FIELDS = [
   "ad_id", "ad_name", "impressions", "spend",
   "video_play_actions", "video_p25_watched_actions",

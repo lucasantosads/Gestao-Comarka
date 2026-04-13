@@ -87,6 +87,17 @@ const CONFIG_GROUPS: ConfigGroup[] = [
     ],
   },
   {
+    title: "Asaas",
+    description: "Gateway de pagamentos — cobranças, boletos, PIX e cartão",
+    icon: "💳",
+    fields: [
+      { key: "ASAAS_API_KEY", label: "API Key", placeholder: "$aact_xxxxxxxx...", description: "Chave de acesso à API Asaas (Minha Conta → Integrações → API)", secret: true },
+      { key: "ASAAS_ENVIRONMENT", label: "Ambiente", placeholder: "production", description: "production ou sandbox — usar sandbox para testes" },
+      { key: "ASAAS_WEBHOOK_TOKEN", label: "Webhook Token (opcional)", placeholder: "whk_xxxxxxxx", description: "Token para validar webhooks recebidos do Asaas", secret: true },
+      { key: "ADMIN_WHATSAPP", label: "WhatsApp Admin (alertas)", placeholder: "5511999998888", description: "Número do admin para receber alertas de cobranças (código país + DDD + número)" },
+    ],
+  },
+  {
     title: "WhatsApp / Evolution API",
     description: "Envio de mensagens automáticas via WhatsApp",
     icon: "💬",
@@ -204,6 +215,22 @@ export default function IntegracoesPage() {
 
   const toggleSecret = (key: string) => setShowSecrets((prev) => ({ ...prev, [key]: !prev[key] }));
 
+  // Health check detalhado
+  const [healthApis, setHealthApis] = useState<{ name: string; status: string; message: string; response_ms: number; details?: Record<string, unknown> }[]>([]);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [healthCheckedAt, setHealthCheckedAt] = useState("");
+
+  const testConnections = async () => {
+    setHealthLoading(true);
+    try {
+      const r = await fetch("/api/health");
+      const d = await r.json();
+      setHealthApis(d.apis || []);
+      setHealthCheckedAt(d.checked_at || "");
+    } catch { toast.error("Erro ao verificar APIs"); }
+    setHealthLoading(false);
+  };
+
   const isFieldFilled = (key: string) => !!values[key]?.trim();
 
   const totalFields = CONFIG_GROUPS.reduce((s, g) => s + g.fields.length, 0);
@@ -222,6 +249,47 @@ export default function IntegracoesPage() {
           {filledFields}/{totalFields} preenchidos
         </Badge>
       </div>
+
+      {/* Status de APIs */}
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm">Status das APIs</CardTitle>
+            <Button size="sm" variant="outline" onClick={testConnections} disabled={healthLoading} className="text-xs">
+              {healthLoading ? "Verificando..." : "Verificar Agora"}
+            </Button>
+          </div>
+          {healthCheckedAt && <p className="text-[10px] text-muted-foreground">Verificado em {new Date(healthCheckedAt).toLocaleString("pt-BR")}</p>}
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {healthApis.length === 0 && !healthLoading && (
+            <p className="text-xs text-muted-foreground text-center py-4">Clique em &quot;Verificar Agora&quot; para testar todas as APIs</p>
+          )}
+          {healthLoading && <div className="h-20 bg-muted animate-pulse rounded" />}
+          {healthApis.map((api) => (
+            <div key={api.name} className={`flex items-center justify-between p-2.5 rounded-lg border ${api.status === "ok" ? "border-green-500/20 bg-green-500/5" : api.status === "warning" ? "border-yellow-500/20 bg-yellow-500/5" : "border-red-500/20 bg-red-500/5"}`}>
+              <div className="flex items-center gap-2">
+                {api.status === "ok" ? <CheckCircle size={14} className="text-green-400" /> : <XCircle size={14} className="text-red-400" />}
+                <div>
+                  <p className="text-xs font-medium">{api.name}</p>
+                  <p className="text-[10px] text-muted-foreground">{api.message}</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] font-mono text-muted-foreground">{api.response_ms}ms</p>
+                {api.details?.days_left !== undefined && (
+                  <p className={`text-[10px] font-medium ${Number(api.details.days_left) < 7 ? "text-red-400" : Number(api.details.days_left) < 30 ? "text-yellow-400" : "text-green-400"}`}>
+                    {Number(api.details.days_left) > 0 ? `Expira em ${String(api.details.days_left)}d` : "Expirado!"}
+                  </p>
+                )}
+                {api.details?.token_expires ? (
+                  <p className="text-[9px] text-muted-foreground">{new Date(String(api.details.token_expires)).toLocaleDateString("pt-BR")}</p>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
 
       {/* Actions */}
       <div className="flex flex-wrap gap-2">
@@ -297,8 +365,10 @@ export default function IntegracoesPage() {
           <p><strong>6.</strong> Crie App no <strong>Facebook Developers</strong> → gere token de longa duração → cole aqui</p>
           <p><strong>7.</strong> (Opcional) Configure <strong>Evolution API</strong> para envio de relatórios via WhatsApp</p>
           <p><strong>8.</strong> (Opcional) Gere chave da <strong>Anthropic</strong> para análise por IA dos closers</p>
-          <p><strong>9.</strong> Preencha todas as chaves nesta página → clique em <strong>&quot;Copiar .env.local&quot;</strong> → cole no arquivo <code>.env.local</code></p>
-          <p><strong>10.</strong> Adicione as mesmas variáveis na Vercel (Settings → Environment Variables) e faça redeploy</p>
+          <p><strong>9.</strong> Crie conta no <strong>Asaas</strong> → Minha Conta → Integrações → API → gere a API Key. Use ambiente <code>sandbox</code> para testes. Configure o Webhook Token para receber notificações automáticas de pagamento</p>
+          <p><strong>10.</strong> Execute a migration <code>migration-financeiro-modulo.sql</code> no SQL Editor do Supabase</p>
+          <p><strong>11.</strong> Preencha todas as chaves nesta página → clique em <strong>&quot;Copiar .env.local&quot;</strong> → cole no arquivo <code>.env.local</code></p>
+          <p><strong>12.</strong> Adicione as mesmas variáveis na Vercel (Settings → Environment Variables) e faça redeploy</p>
         </CardContent>
       </Card>
     </div>

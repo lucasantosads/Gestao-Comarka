@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import { useDateFilter } from "@/contexts/DateFilterContext";
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from "recharts";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ReferenceLine } from "recharts";
 
 interface FunnelData { avgP25: number; avgP50: number; avgP75: number; avgP100: number; avgCostPerResult: number; adCount: number }
 
@@ -44,6 +44,7 @@ export function FunnelRetentionMap() {
                 <XAxis dataKey="etapa" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => v.toFixed(0) + "%"} />
                 <Tooltip formatter={(v) => formatPercent(Number(v))} />
+                <ReferenceLine y={3} stroke="#94a3b8" strokeDasharray="4 4" label={{ value: "Benchmark 3%", fill: "#94a3b8", fontSize: 10, position: "right" }} />
                 <Legend />
                 <Bar dataKey="Topo" fill="#6366f1" radius={[3, 3, 0, 0]} />
                 <Bar dataKey="Meio" fill="#8b5cf6" radius={[3, 3, 0, 0]} />

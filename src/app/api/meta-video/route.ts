@@ -11,6 +11,8 @@ import { filterValidVideoAds, calculateMetrics } from "@/lib/video-metrics";
 import { calculateCreativeScore } from "@/lib/scoring";
 import type { RawMetaInsight, CreativeWithMetrics } from "@/lib/types/metaVideo";
 
+export const revalidate = 120; // Meta Ads data
+
 const FIELDS = [
   "ad_id", "ad_name", "campaign_name", "objective", "impressions", "spend",
   "video_p25_watched_actions", "video_p50_watched_actions",

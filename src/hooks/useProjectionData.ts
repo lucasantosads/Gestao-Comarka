@@ -5,6 +5,13 @@ interface MetaSummary { spend: number; leads: number; cpl: number; ctr: number; 
 interface CrmSummary { totalLeads: number; qualifiedLeads: number; scheduledMeetings: number; completedMeetings: number; noShowCount: number; closedDeals: number; avgResponseTimeMinutes: number; taxaQualificacao: number; taxaAgendamento: number; taxaNoShow: number; taxaFechamento: number }
 interface DashSummary { ticketMedio: number; metaMensalSalva: number | null; investimento: number; leadsTotais: number }
 
+export interface HistData {
+  mes: string; leads: number; investimento: number; reunioesAgendadas: number;
+  reunioesFeitas: number; noShow: number; contratos: number; mrr: number;
+  ltv: number; ticketMedio: number; cpl: number; taxaNoShow: number;
+  taxaFechamento: number; taxaLeadReuniao: number;
+}
+
 export interface Alert {
   id: string;
   categoria: "orcamento" | "criativo" | "crm" | "funil";
@@ -13,69 +20,177 @@ export interface Alert {
   descricao: string;
 }
 
-interface ProjectionInputs {
-  metaReunioes: number;
+export interface HistoricalAverages {
   ticketMedio: number;
-  taxaFechamento: number;
+  taxaLeadReuniao: number;     // % de leads que viram reunião feita (direto)
+  taxaReuniaoFechamento: number; // % de reuniões feitas que viram contrato (direto)
+  taxaNoShow: number;
+  cpl: number;
+  cac: number;                  // custo por aquisição de cliente
+  custoPorReuniao: number;      // investimento / reuniões feitas
 }
 
-export function useProjectionData(inputs: ProjectionInputs) {
+export interface FinancialGoals {
+  metaMRR: number;
+  faturamentoLTV: number;
+  entrada: number;
+  metaContratos: number;
+}
+
+export interface MetricOverrides {
+  ticketMedio: number | null;       // null = histórico, 0 = desativado
+  taxaLeadReuniao: number | null;
+  taxaReuniaoFechamento: number | null;
+  taxaNoShow: number | null;
+  cpl: number | null;
+  cac: number | null;
+}
+
+export type HistPeriod = 1 | 3 | 6 | 12;
+
+export function useProjectionData(goals: FinancialGoals, overrides: MetricOverrides, histPeriod: HistPeriod = 3) {
   const [metaData, setMetaData] = useState<MetaSummary | null>(null);
   const [crmData, setCrmData] = useState<CrmSummary | null>(null);
   const [dashData, setDashData] = useState<DashSummary | null>(null);
+  const [allMeses, setAllMeses] = useState<(HistData | null)[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     setIsLoading(true);
+    setError(null);
     fetch("/api/projections/summary")
       .then((r) => r.json())
       .then((data) => {
         setMetaData(data.meta);
         setCrmData(data.crm);
         setDashData(data.dash);
+        if (data.meses) setAllMeses(data.meses);
         if (data.error) setError(data.error);
       })
       .catch((e) => setError(String(e)))
       .finally(() => setIsLoading(false));
-  }, []);
+  }, [retryCount]);
 
-  const projection = useMemo(() => {
-    const taxaQualif = crmData?.taxaQualificacao ?? 0.25;
-    const taxaAgend = crmData?.taxaAgendamento ?? 0.30;
-    const taxaNoShow = crmData?.taxaNoShow ?? 0.20;
-    const cpl = metaData?.cpl ?? 50;
-    const budgetAtual = metaData?.budgetMonthly ?? dashData?.investimento ?? 0;
+  const retry = () => setRetryCount((c) => c + 1);
 
-    const metaR = inputs.metaReunioes || 1;
-    const convChain = taxaQualif * taxaAgend * (1 - taxaNoShow);
+  // Historical averages — using DIRECT observed rates, based on selected period
+  const histAvg = useMemo((): HistoricalAverages => {
+    const months = allMeses.slice(0, histPeriod).filter(Boolean) as HistData[];
 
-    const leadsNecessarios = convChain > 0 ? Math.ceil(metaR / convChain) : 0;
-    const qualificadosNecessarios = (taxaAgend * (1 - taxaNoShow)) > 0 ? Math.ceil(metaR / (taxaAgend * (1 - taxaNoShow))) : 0;
-    const agendamentosNecessarios = (1 - taxaNoShow) > 0 ? Math.ceil(metaR / (1 - taxaNoShow)) : 0;
-    const budgetNecessario = leadsNecessarios * cpl;
-    const budgetGap = Math.max(0, budgetNecessario - budgetAtual);
-    const clientesFechados = Math.round(metaR * (1 - taxaNoShow) * inputs.taxaFechamento * 10) / 10;
-    const faturamentoProjetado = clientesFechados * inputs.ticketMedio;
-    const reunioesPerdidas = Math.round(metaR * taxaNoShow);
+    if (months.length === 0) {
+      return {
+        ticketMedio: 1800,
+        taxaLeadReuniao: 0.08,          // 8% leads → reunião feita
+        taxaReuniaoFechamento: 0.25,    // 25% reunião → fechamento
+        taxaNoShow: 0.20,
+        cpl: 50,
+        cac: 2500,
+        custoPorReuniao: 625,
+      };
+    }
 
-    // Com budget atual, quantos leads/reuniões consigo?
-    const leadsComBudgetAtual = cpl > 0 ? Math.floor(budgetAtual / cpl) : 0;
-    const reunioesComBudgetAtual = Math.floor(leadsComBudgetAtual * convChain);
+    const avg = (fn: (m: HistData) => number) => {
+      const vals = months.map(fn).filter((v) => v > 0);
+      return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
+    };
+
+    // Taxa direta: leads → reunião feita
+    const taxaLeadReuniao = avg((m) => m.leads > 0 ? m.reunioesFeitas / m.leads : 0) || 0.08;
+
+    // Taxa direta: reunião feita → contrato fechado
+    const taxaReuniaoFechamento = avg((m) => m.reunioesFeitas > 0 ? m.contratos / m.reunioesFeitas : 0) || 0.25;
+
+    // CAC = investimento / contratos
+    const cac = avg((m) => m.contratos > 0 ? m.investimento / m.contratos : 0) || 2500;
+
+    // Custo por reunião = investimento / reuniões feitas
+    const custoPorReuniao = avg((m) => m.reunioesFeitas > 0 ? m.investimento / m.reunioesFeitas : 0) || 625;
 
     return {
-      leadsNecessarios,
-      qualificadosNecessarios,
-      agendamentosNecessarios,
-      budgetNecessario,
-      budgetGap,
-      clientesFechados,
-      faturamentoProjetado,
-      reunioesPerdidas,
-      leadsComBudgetAtual,
-      reunioesComBudgetAtual,
+      ticketMedio: avg((m) => m.ticketMedio) || 1800,
+      taxaLeadReuniao,
+      taxaReuniaoFechamento,
+      taxaNoShow: avg((m) => m.taxaNoShow) || 0.20,
+      cpl: avg((m) => m.cpl) || 50,
+      cac,
+      custoPorReuniao,
     };
-  }, [inputs, metaData, crmData, dashData]);
+  }, [allMeses, histPeriod]);
+
+  // Effective values: override > historical average (0 = desativado, treated as historical)
+  const effective = useMemo(() => ({
+    ticketMedio: (overrides.ticketMedio !== null && overrides.ticketMedio > 0) ? overrides.ticketMedio : histAvg.ticketMedio,
+    taxaLeadReuniao: (overrides.taxaLeadReuniao !== null && overrides.taxaLeadReuniao > 0) ? overrides.taxaLeadReuniao : histAvg.taxaLeadReuniao,
+    taxaReuniaoFechamento: (overrides.taxaReuniaoFechamento !== null && overrides.taxaReuniaoFechamento > 0) ? overrides.taxaReuniaoFechamento : histAvg.taxaReuniaoFechamento,
+    taxaNoShow: overrides.taxaNoShow !== null ? overrides.taxaNoShow : histAvg.taxaNoShow,
+    cpl: (overrides.cpl !== null && overrides.cpl > 0) ? overrides.cpl : histAvg.cpl,
+    cac: (overrides.cac !== null && overrides.cac > 0) ? overrides.cac : histAvg.cac,
+    custoPorReuniao: histAvg.custoPorReuniao,
+  }), [overrides, histAvg]);
+
+  // Reverse projection: simplified 3-step funnel + CAC cross-check
+  const projection = useMemo(() => {
+    const { metaMRR, faturamentoLTV, entrada, metaContratos } = goals;
+    const { ticketMedio, taxaLeadReuniao, taxaReuniaoFechamento, taxaNoShow, cpl, cac } = effective;
+
+    // Step 1: How many clients?
+    const clientesExatos = metaContratos > 0
+      ? metaContratos
+      : (ticketMedio > 0 ? metaMRR / ticketMedio : 0);
+    const clientesNecessarios = Math.ceil(clientesExatos);
+
+    // Step 2: How many meetings needed? (reunião feita → fechamento)
+    const reunioesExatas = taxaReuniaoFechamento > 0 ? clientesExatos / taxaReuniaoFechamento : 0;
+    const reunioesNecessarias = Math.ceil(reunioesExatas);
+
+    // Agendamentos = reuniões / (1 - no-show) para ter as reuniões feitas
+    const agendamentosExatos = (1 - taxaNoShow) > 0 ? reunioesExatas / (1 - taxaNoShow) : reunioesExatas;
+    const agendamentosNecessarios = Math.ceil(agendamentosExatos);
+
+    // Step 3: How many leads? (lead → reunião feita, taxa direta observada)
+    const leadsExatos = taxaLeadReuniao > 0 ? reunioesExatas / taxaLeadReuniao : 0;
+    const leadsNecessarios = Math.ceil(leadsExatos);
+
+    // Budget via CPL
+    const budgetViaCPL = Math.round(leadsNecessarios * cpl * 100) / 100;
+
+    // Budget via CAC (cross-check)
+    const budgetViaCAC = Math.round(clientesNecessarios * cac * 100) / 100;
+
+    // Use o menor como referência realista (CAC é observado direto)
+    const budgetNecessario = Math.min(budgetViaCPL, budgetViaCAC);
+
+    // Forward projections
+    const mrrProjetado = clientesNecessarios * ticketMedio;
+    const faturamentoProjetado = faturamentoLTV;
+    const entradaProjetada = entrada;
+    const faturamentoPorCliente = clientesNecessarios > 0 ? faturamentoLTV / clientesNecessarios : 0;
+    const entradaPorCliente = clientesNecessarios > 0 ? entrada / clientesNecessarios : 0;
+    const reunioesPerdidas = agendamentosNecessarios - reunioesNecessarias;
+
+    // Custo por reunião projetado
+    const custoPorReuniaoProj = reunioesNecessarias > 0 ? budgetNecessario / reunioesNecessarias : 0;
+
+    return {
+      clientesExatos,
+      clientesNecessarios,
+      reunioesNecessarias,
+      agendamentosNecessarios,
+      leadsNecessarios,
+      budgetViaCPL,
+      budgetViaCAC,
+      budgetNecessario,
+      mrrProjetado,
+      faturamentoProjetado,
+      entradaProjetada,
+      reunioesPerdidas,
+      faturamentoPorCliente,
+      entradaPorCliente,
+      custoPorReuniaoProj,
+    };
+  }, [goals, effective]);
 
   const alerts = useMemo(() => {
     const list: Alert[] = [];
@@ -96,22 +211,26 @@ export function useProjectionData(inputs: ProjectionInputs) {
       else if (crmData.taxaNoShow > 0.25) list.push({ id: "noshow-attn", categoria: "crm", severidade: "atencao", titulo: "No-show alto", descricao: `Taxa de no-show de ${(crmData.taxaNoShow * 100).toFixed(0)}% — ideal abaixo de 20%.` });
 
       if (crmData.avgResponseTimeMinutes > 60) list.push({ id: "resp-crit", categoria: "crm", severidade: "critico", titulo: "Tempo de resposta lento", descricao: `Tempo médio de ${crmData.avgResponseTimeMinutes} minutos — leads esfriam. Ideal: < 15 minutos.` });
-
-      if (crmData.taxaQualificacao < 0.20) list.push({ id: "qualif-attn", categoria: "funil", severidade: "atencao", titulo: "Baixa qualificação", descricao: `Apenas ${(crmData.taxaQualificacao * 100).toFixed(0)}% dos leads são qualificados — ideal acima de 25%.` });
     }
 
-    if (projection.budgetGap > 0) {
-      const budgetAtual = metaData?.budgetMonthly ?? dashData?.investimento ?? 0;
-      const gapPct = budgetAtual > 0 ? (projection.budgetGap / budgetAtual) * 100 : 100;
-      const sev = gapPct > 50 ? "critico" : "atencao";
-      list.push({ id: "budget-gap", categoria: "orcamento", severidade: sev as "critico" | "atencao", titulo: "Orçamento insuficiente", descricao: `Orçamento atual de R$ ${fmt(budgetAtual)} gera ~${projection.leadsComBudgetAtual} leads. Para ${inputs.metaReunioes} reuniões, precisa de R$ ${fmt(projection.budgetNecessario)} (+R$ ${fmt(projection.budgetGap)}/mês).` });
+    // Cross-check: se CPL e CAC divergem muito, alertar
+    if (projection.budgetViaCPL > 0 && projection.budgetViaCAC > 0) {
+      const diff = Math.abs(projection.budgetViaCPL - projection.budgetViaCAC);
+      const pct = diff / Math.max(projection.budgetViaCPL, projection.budgetViaCAC) * 100;
+      if (pct > 30) {
+        list.push({ id: "budget-diverge", categoria: "funil", severidade: "atencao", titulo: "CPL e CAC divergem", descricao: `Budget via CPL: R$ ${fmt(projection.budgetViaCPL)} vs via CAC: R$ ${fmt(projection.budgetViaCAC)} (${pct.toFixed(0)}% de diferença). O CAC histórico sugere investimento de R$ ${fmt(projection.budgetViaCAC)}.` });
+      }
     }
 
-    // Ordenar: critico primeiro
     list.sort((a, b) => (a.severidade === "critico" ? -1 : a.severidade === "atencao" ? 0 : 1) - (b.severidade === "critico" ? -1 : b.severidade === "atencao" ? 0 : 1));
 
     return list;
-  }, [metaData, crmData, dashData, projection, inputs]);
+  }, [metaData, crmData, projection]);
 
-  return { metaData, crmData, dashData, projection, alerts, isLoading, error };
+  // All months with data, oldest first (for table display)
+  const histMeses = useMemo(() => {
+    return allMeses.filter(Boolean).reverse() as HistData[];
+  }, [allMeses]);
+
+  return { metaData, crmData, dashData, allMeses, histMeses, histAvg, effective, projection, alerts, isLoading, error, retry };
 }

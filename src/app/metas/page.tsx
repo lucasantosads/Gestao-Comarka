@@ -20,6 +20,7 @@ import { MonthSelector } from "@/components/month-selector";
 import { getCurrentMonth } from "@/lib/format";
 import { toast } from "sonner";
 import { Save } from "lucide-react";
+import { CurrencyInput } from "@/components/currency-input";
 
 export default function MetasPage() {
   const [mes, setMes] = useState(getCurrentMonth);
@@ -170,15 +171,15 @@ export default function MetasPage() {
     setSavingSdr(null);
   }
 
-  const fields: { label: string; key: keyof typeof f; step?: string }[] = [
-    { label: "Meta de Entradas (R$)", key: "meta_entrada_valor", step: "0.01" },
-    { label: "Meta Faturamento/MRR (R$)", key: "meta_faturamento_total", step: "0.01" },
+  const fields: { label: string; key: keyof typeof f; step?: string; currency?: boolean }[] = [
+    { label: "Meta de Entradas", key: "meta_entrada_valor", currency: true },
+    { label: "Meta Faturamento/MRR", key: "meta_faturamento_total", currency: true },
     { label: "Meta Contratos Fechados", key: "meta_contratos_fechados" },
     { label: "Meta Reunioes Agendadas", key: "meta_reunioes_agendadas" },
     { label: "Meta Reunioes Feitas", key: "meta_reunioes_feitas" },
     { label: "Meta Taxa No Show (%)", key: "meta_taxa_no_show", step: "0.1" },
     { label: "Leads Totais do Mes", key: "leads_totais" },
-    { label: "Investido em Anuncios (R$)", key: "valor_investido_anuncios", step: "0.01" },
+    { label: "Investido em Anuncios", key: "valor_investido_anuncios", currency: true },
   ];
 
   return (
@@ -196,7 +197,11 @@ export default function MetasPage() {
             {fields.map((field) => (
               <div key={field.key} className="space-y-2">
                 <Label className="text-xs">{field.label}</Label>
-                <Input type="number" min={0} step={field.step || "1"} value={f[field.key]} onChange={(e) => setF({ ...f, [field.key]: Number(e.target.value) })} />
+                {field.currency ? (
+                  <CurrencyInput value={Number(f[field.key]) || 0} onChange={(v) => setF({ ...f, [field.key]: v })} />
+                ) : (
+                  <Input type="number" min={0} step={field.step || "1"} value={f[field.key]} onChange={(e) => setF({ ...f, [field.key]: Number(e.target.value) })} />
+                )}
               </div>
             ))}
           </div>
@@ -235,10 +240,10 @@ export default function MetasPage() {
                         <Input type="number" min={0} className="w-20 ml-auto text-right" value={m.meta_contratos} onChange={(e) => updateCloserMeta(c.id, "meta_contratos", Number(e.target.value))} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input type="number" min={0} step={0.01} className="w-28 ml-auto text-right" value={m.meta_mrr} onChange={(e) => updateCloserMeta(c.id, "meta_mrr", Number(e.target.value))} />
+                        <CurrencyInput value={m.meta_mrr} onChange={(v) => updateCloserMeta(c.id, "meta_mrr", v)} className="w-28 ml-auto text-right" />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input type="number" min={0} step={0.01} className="w-28 ml-auto text-right" value={m.meta_ltv} onChange={(e) => updateCloserMeta(c.id, "meta_ltv", Number(e.target.value))} />
+                        <CurrencyInput value={m.meta_ltv} onChange={(v) => updateCloserMeta(c.id, "meta_ltv", v)} className="w-28 ml-auto text-right" />
                       </TableCell>
                       <TableCell className="text-right">
                         <Input type="number" min={0} className="w-20 ml-auto text-right" value={m.meta_reunioes_feitas} onChange={(e) => updateCloserMeta(c.id, "meta_reunioes_feitas", Number(e.target.value))} />

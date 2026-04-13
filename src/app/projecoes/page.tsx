@@ -1,427 +1,350 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatCurrency, formatPercent } from "@/lib/format";
+import { Button } from "@/components/ui/button";
+import { formatCurrency } from "@/lib/format";
 import { useProjectionData } from "@/hooks/useProjectionData";
+import type { HistData, HistPeriod } from "@/hooks/useProjectionData";
 import { ALL_PROVIDERS, AI_LABELS, AI_CONFIG } from "@/lib/ai-config";
 import type { AIProvider } from "@/lib/ai-client";
+import { useProjecoesSWR } from "@/hooks/use-projecoes-data";
+import { motion, AnimatePresence } from "framer-motion";
+import Link from "next/link";
 import {
   AlertTriangle, CheckCircle, Target, TrendingUp, DollarSign,
-  Users, Brain, Loader2, ChevronDown, History,
+  Users, Brain, Loader2, ChevronDown, History, RefreshCw,
+  Banknote, Receipt, ArrowDownToLine, ToggleLeft, ToggleRight,
+  Crosshair, SlidersHorizontal, BarChart3,
+  PieChart as PieChartIcon, Gauge, Sparkles, Eye, Save, LineChart as LineChartIcon
 } from "lucide-react";
+import { CurrencyInput } from "@/components/currency-input";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  LineChart, Line, CartesianGrid, Legend, PieChart as RPieChart,
+  Pie, Cell,
+} from "recharts";
+import { toast } from "sonner";
 
-const ALERT_COLORS = { critico: "bg-red-500/10 border-red-500/30 text-red-400", atencao: "bg-yellow-500/10 border-yellow-500/30 text-yellow-400", ok: "bg-green-500/10 border-green-500/30 text-green-400" };
+// ===== CONSTANTES E CONFIGURAÇÕES =====
+const PIE_COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6", "#f97316"];
+const MESES_PT: Record<string, string> = { "01": "Jan", "02": "Fev", "03": "Mar", "04": "Abr", "05": "Mai", "06": "Jun", "07": "Jul", "08": "Ago", "09": "Set", "10": "Out", "11": "Nov", "12": "Dez" };
 const CAT_LABELS = { orcamento: "Orçamento", criativo: "Criativo", crm: "CRM", funil: "Funil" };
 const CAT_FILTER = ["todas", "orcamento", "criativo", "crm", "funil"] as const;
+type MetricState = "historico" | "manual" | "desativado";
 
-const MESES_PT: Record<string, string> = {
-  "01": "Janeiro", "02": "Fevereiro", "03": "Março", "04": "Abril",
-  "05": "Maio", "06": "Junho", "07": "Julho", "08": "Agosto",
-  "09": "Setembro", "10": "Outubro", "11": "Novembro", "12": "Dezembro",
-};
-
-function mesLabel(mes: string) {
-  const [, m] = mes.split("-");
-  return MESES_PT[m] || mes;
+// ===== INTERFACES =====
+interface ProjecaoAlerta {
+  id: string; tipo: "meta_inalcancavel" | "gargalo_funil" | "ritmo_insuficiente"; mensagem: string;
+  acoes_sugeridas: string[] | null; visualizado: boolean; criado_em: string;
 }
 
-function BenchmarkCard({ label, value, benchmark, fonte, unit }: { label: string; value: number | null; benchmark: string; fonte: string; unit?: string }) {
-  const display = value !== null ? (unit === "R$" ? formatCurrency(value) : unit === "%" ? formatPercent(value) : unit === "min" ? `${value.toFixed(0)} min` : `${value.toFixed(1)}x`) : "—";
-  return (
-    <div className="p-3 border rounded-lg space-y-1">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <Badge variant="outline" className="text-[9px]">{fonte}</Badge>
-      </div>
-      <p className="text-lg font-bold">{display}</p>
-      <p className="text-[10px] text-muted-foreground">Ideal: {benchmark}</p>
-    </div>
-  );
-}
-
-function FunnelBar({ label, atual, necessario }: { label: string; atual: number; necessario: number }) {
-  const gap = necessario - atual;
-  const pct = necessario > 0 ? Math.min((atual / necessario) * 100, 100) : 0;
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-xs">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="font-medium">
-          {atual} / {necessario}
-          {gap > 0 && <span className="text-red-400 ml-1">(+{gap})</span>}
-        </span>
-      </div>
-      <div className="h-3 bg-muted rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${pct >= 100 ? "bg-green-500" : pct >= 60 ? "bg-yellow-500" : "bg-red-500"}`} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  );
-}
-
-interface HistData {
-  mes: string; leads: number; investimento: number; reunioesAgendadas: number;
-  reunioesFeitas: number; noShow: number; contratos: number; mrr: number;
-  ltv: number; ticketMedio: number; cpl: number; taxaNoShow: number;
-  taxaFechamento: number; taxaLeadReuniao: number;
-}
-
-function HistRow({ label, values, format }: { label: string; values: (number | null)[]; format: "currency" | "percent" | "number" }) {
-  const fmt = (v: number | null) => {
-    if (v === null || v === undefined) return "—";
-    if (format === "currency") return formatCurrency(v);
-    if (format === "percent") return `${(v * 100).toFixed(1)}%`;
-    return v.toLocaleString("pt-BR");
-  };
-
-  return (
-    <tr className="border-b border-border/50 hover:bg-muted/30">
-      <td className="py-2 px-3 text-xs text-muted-foreground font-medium">{label}</td>
-      {values.map((v, i) => (
-        <td key={i} className="py-2 px-3 text-xs text-right font-mono">{fmt(v)}</td>
-      ))}
-    </tr>
-  );
-}
+// ===== HELPER FUNCTIONS =====
+function mesLabel(mes: string) { const [, m] = mes.split("-"); return MESES_PT[m] || mes; }
 
 export default function ProjecoesPage() {
-  const [metaReunioes, setMetaReunioes] = useState(15);
-  const [ticketMedio, setTicketMedio] = useState(1800);
-  const [taxaFechamento, setTaxaFechamento] = useState(0.20);
+  const [mounted, setMounted] = useState(false);
+  const { alertas, mutateAlertas, breakEven, ltv, acuracia, isLoading: loadingExtras } = useProjecoesSWR();
+
+  // Financial goals
+  const [metaMRR, setMetaMRR] = useState(0);
+  const [faturamentoLTV, setFaturamentoLTV] = useState(0);
+  const [entrada, setEntrada] = useState(0);
+  const [histPeriod, setHistPeriod] = useState<HistPeriod>(3);
+
+  // Metric states
+  const [ticketState, setTicketState] = useState<MetricState>("historico");
+  const [leadReunState, setLeadReunState] = useState<MetricState>("historico");
+  const [reunFechState, setReunFechState] = useState<MetricState>("historico");
+  const [noShowState, setNoShowState] = useState<MetricState>("historico");
+  const [cplState, setCplState] = useState<MetricState>("historico");
+  const [cacState, setCacState] = useState<MetricState>("historico");
+  const [contratosState, setContratosState] = useState<MetricState>("desativado");
+
+  // Manual values
+  const [manualTicket, setManualTicket] = useState<number>(0);
+  const [manualLeadReun, setManualLeadReun] = useState<number>(0);
+  const [manualReunFech, setManualReunFech] = useState<number>(0);
+  const [manualNoShow, setManualNoShow] = useState<number>(0);
+  const [manualCpl, setManualCpl] = useState<number>(0);
+  const [manualCac, setManualCac] = useState<number>(0);
+  const [manualContratos, setManualContratos] = useState<number>(0);
+
   const [alertFilter, setAlertFilter] = useState<typeof CAT_FILTER[number]>("todas");
 
-  // AI analysis state
+  // AI & Simulators
   const [aiProvider, setAiProvider] = useState<AIProvider>(AI_CONFIG.analise_closer);
   const [aiResult, setAiResult] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
   const [showProviderSelect, setShowProviderSelect] = useState(false);
+  const [aiFullResult, setAiFullResult] = useState<string | null>(null);
+  const [aiFullLoading, setAiFullLoading] = useState(false);
+  const [savingNotion, setSavingNotion] = useState(false);
+  const [simResultado, setSimResultado] = useState<any>(null);
+  const [simLoading, setSimLoading] = useState(false);
+  const [simParams, setSimParams] = useState({ orcamento: 0, noshow: 20, qualificacao: 15, fechamento: 25, closers: 3 });
 
-  // Histórico
-  const [historico, setHistorico] = useState<{ mesAnterior: HistData | null; mes2: HistData | null; mes3: HistData | null } | null>(null);
+  const { metaData, crmData, dashData, histMeses, histAvg, effective, projection, alerts, isLoading, error, retry } =
+    useProjectionData({ metaMRR, faturamentoLTV, entrada, metaContratos: contratosState === "manual" ? manualContratos : 0 },
+      { ticketMedio: ticketState === "desativado" ? 0 : ticketState === "manual" ? manualTicket : null, taxaLeadReuniao: leadReunState === "desativado" ? 0 : leadReunState === "manual" ? manualLeadReun : null, taxaReuniaoFechamento: reunFechState === "desativado" ? 0 : reunFechState === "manual" ? manualReunFech : null, taxaNoShow: noShowState === "desativado" ? 0 : noShowState === "manual" ? manualNoShow : null, cpl: cplState === "desativado" ? 0 : cplState === "manual" ? manualCpl : null, cac: cacState === "desativado" ? 0 : cacState === "manual" ? manualCac : null }, histPeriod);
 
-  const { metaData, crmData, dashData, projection, alerts, isLoading, error } = useProjectionData({ metaReunioes, ticketMedio, taxaFechamento });
-
-  // Fetch historico along with projection data
+  // FIX S-S-R Hydration
   useEffect(() => {
-    fetch("/api/projections/summary")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.historico) setHistorico(data.historico);
-      })
-      .catch(() => {});
+    setMounted(true);
+    setAiResult(localStorage.getItem("ai_analysis_cache") || null);
   }, []);
 
-  // Pre-fill com dados reais
   useEffect(() => {
-    if (dashData?.ticketMedio && dashData.ticketMedio > 0) setTicketMedio(Math.round(dashData.ticketMedio));
-    if (crmData?.taxaFechamento && crmData.taxaFechamento > 0) setTaxaFechamento(crmData.taxaFechamento);
-  }, [dashData, crmData]);
+    if (ticketState === "manual" && manualTicket === 0) setManualTicket(histAvg.ticketMedio);
+    if (leadReunState === "manual" && manualLeadReun === 0) setManualLeadReun(histAvg.taxaLeadReuniao);
+    if (reunFechState === "manual" && manualReunFech === 0) setManualReunFech(histAvg.taxaReuniaoFechamento);
+    if (noShowState === "manual" && manualNoShow === 0) setManualNoShow(histAvg.taxaNoShow);
+    if (cplState === "manual" && manualCpl === 0) setManualCpl(histAvg.cpl);
+    if (cacState === "manual" && manualCac === 0) setManualCac(histAvg.cac);
+  }, [ticketState, leadReunState, reunFechState, noShowState, cplState, cacState, histAvg, manualTicket, manualLeadReun, manualReunFech, manualNoShow, manualCpl, manualCac]);
+
+  const runSimulacao = useCallback(async () => {
+    setSimLoading(true);
+    try {
+      const res = await fetch("/api/projecoes/funil-reverso", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meta_contratos: contratosState === "manual" ? manualContratos : undefined, meta_mrr: metaMRR, usar_taxas_manuais: false, taxas_override: { taxa_lead_para_qualificado: simParams.qualificacao / 100, taxa_proposta_para_fechamento: simParams.fechamento / 100, noshow_rate: simParams.noshow / 100 } }),
+      });
+      const data = await res.json();
+      if (!data.error) setSimResultado(data);
+    } catch (e) {
+      toast.error("Erro na simulação");
+    } finally {
+      setSimLoading(false);
+    }
+  }, [metaMRR, simParams, contratosState, manualContratos]);
 
   const runAiAnalysis = useCallback(async () => {
     setAiLoading(true);
-    setAiError(null);
-    setAiResult(null);
-
-    const projectionText = `
-DADOS ATUAIS DO MÊS:
-- Meta de reuniões: ${metaReunioes}
-- Ticket médio: R$ ${ticketMedio.toLocaleString("pt-BR")}
-- Taxa de fechamento: ${(taxaFechamento * 100).toFixed(0)}%
-
-META ADS:
-- Investimento: R$ ${metaData?.spend?.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) || "N/A"}
-- Leads Meta: ${metaData?.leads ?? "N/A"}
-- CPL: R$ ${metaData?.cpl?.toFixed(2) || "N/A"}
-- CTR: ${metaData?.ctr?.toFixed(2) || "N/A"}%
-- Frequência: ${metaData?.frequency?.toFixed(1) || "N/A"}x
-
-CRM:
-- Total leads: ${crmData?.totalLeads ?? "N/A"}
-- Qualificados: ${crmData?.qualifiedLeads ?? "N/A"} (${crmData ? (crmData.taxaQualificacao * 100).toFixed(0) : "N/A"}%)
-- Reuniões agendadas: ${crmData?.scheduledMeetings ?? "N/A"}
-- Reuniões realizadas: ${crmData?.completedMeetings ?? "N/A"}
-- No-show: ${crmData?.noShowCount ?? "N/A"} (${crmData ? (crmData.taxaNoShow * 100).toFixed(0) : "N/A"}%)
-- Contratos fechados: ${crmData?.closedDeals ?? "N/A"}
-- Taxa fechamento: ${crmData ? (crmData.taxaFechamento * 100).toFixed(0) : "N/A"}%
-
-PROJEÇÃO:
-- Leads necessários: ${projection.leadsNecessarios}
-- Budget necessário: R$ ${projection.budgetNecessario.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-- Gap de budget: R$ ${projection.budgetGap.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-- Clientes projetados: ${projection.clientesFechados.toFixed(1)}
-- Faturamento projetado: R$ ${projection.faturamentoProjetado.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-- Reuniões perdidas por no-show: ${projection.reunioesPerdidas}
-
-ALERTAS ATIVOS:
-${alerts.map((a) => `- [${a.severidade.toUpperCase()}] ${a.titulo}: ${a.descricao}`).join("\n")}
-
-${historico ? `HISTÓRICO:
-${historico.mes3 ? `- ${mesLabel(historico.mes3.mes)}: ${historico.mes3.leads} leads, ${historico.mes3.contratos} contratos, R$ ${historico.mes3.mrr.toLocaleString("pt-BR")} MRR` : ""}
-${historico.mes2 ? `- ${mesLabel(historico.mes2.mes)}: ${historico.mes2.leads} leads, ${historico.mes2.contratos} contratos, R$ ${historico.mes2.mrr.toLocaleString("pt-BR")} MRR` : ""}
-${historico.mesAnterior ? `- ${mesLabel(historico.mesAnterior.mes)}: ${historico.mesAnterior.leads} leads, ${historico.mesAnterior.contratos} contratos, R$ ${historico.mesAnterior.mrr.toLocaleString("pt-BR")} MRR` : ""}` : ""}
-`.trim();
-
     try {
-      const res = await fetch("/api/projections/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectionData: projectionText, provider: aiProvider }),
-      });
+      const t = `META MRR: ${metaMRR} | LEADS NECESSÁRIOS: ${projection.leadsNecessarios} | Reuniões: ${projection.reunioesNecessarias} | CPL: ${effective.cpl.toFixed(2)}`;
+      const res = await fetch("/api/projections/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectionData: t, provider: aiProvider }) });
       const data = await res.json();
-      if (data.error) setAiError(data.error);
-      else setAiResult(data.analysis);
-    } catch (e) {
-      setAiError(String(e));
-    } finally {
-      setAiLoading(false);
-    }
-  }, [metaReunioes, ticketMedio, taxaFechamento, metaData, crmData, projection, alerts, historico, aiProvider]);
+      if (!data.error) {
+        setAiResult(data.analysis);
+        localStorage.setItem("ai_analysis_cache", data.analysis);
+        localStorage.setItem("ai_analysis_time", new Date().toLocaleString("pt-BR"));
+      }
+    } catch (e) { toast.error("Falha ao consultar IA."); } finally { setAiLoading(false); }
+  }, [metaMRR, projection, effective, aiProvider]);
 
-  if (isLoading) return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Projeção de Meta</h1>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="h-24 bg-muted animate-pulse rounded-lg" />)}</div>
-    </div>
-  );
+  const runFullAnalysis = useCallback(async () => {
+    setAiFullLoading(true);
+    try {
+      const t = `ANÁLISE DE PROJEÇÃO COMPLETA: MRR: ${metaMRR} | Proj MRR: ${projection.mrrProjetado} | Leads Rec: ${projection.leadsNecessarios} | Taxa Reunião: ${(effective.taxaLeadReuniao * 100).toFixed(1)}%`;
+      const res = await fetch("/api/projections/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectionData: t, provider: "anthropic" }) });
+      const data = await res.json();
+      if (!data.error) setAiFullResult(data.analysis);
+    } catch (e) { } finally { setAiFullLoading(false); }
+  }, [metaMRR, projection, effective]);
 
-  const filteredAlerts = alertFilter === "todas" ? alerts : alerts.filter((a) => a.categoria === alertFilter);
+  const unseenAlertas = alertas.filter((a: any) => !a.visualizado);
 
-  const hist = historico;
-  const histMeses = [hist?.mes3, hist?.mes2, hist?.mesAnterior].filter(Boolean) as HistData[];
+  if (!mounted || isLoading || loadingExtras) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-4 animate-in fade-in zoom-in">
+        <div className="w-8 h-8 rounded-full border-4 border-primary border-t-transparent animate-spin" />
+        <p className="text-muted-foreground text-sm font-medium animate-pulse">Sincronizando modelos de Projeção Neural...</p>
+      </div>
+    );
+  }
+
+  // Cross-Tab Linkers
+  const gargaloTrafego = (metaData?.cpl ?? effective.cpl) > 50 && (metaData?.leads ?? 0) < projection.leadsNecessarios * 0.7;
+  const gargaloCRM = (crmData?.completedMeetings ?? 0) >= projection.reunioesNecessarias * 0.7 && (crmData?.closedDeals ?? 0) < projection.clientesNecessarios * 0.5;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Projeção de Meta</h1>
-          <p className="text-sm text-muted-foreground">Simulação baseada em dados reais do Meta Ads e CRM</p>
+    <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-700 fade-in pb-12">
+      {/* HEADER & GLOBALS */}
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between bg-card/60 border border-border/50 p-6 rounded-2xl backdrop-blur-xl shadow-[0_4px_24px_-10px_rgba(0,0,0,0.1)] gap-4">
+        <div className="flex flex-col">
+          <h1 className="text-4xl font-black tracking-tighter flex items-center gap-2">Visão Projetiva <LineChartIcon size={28} className="text-primary opacity-50" /></h1>
+          <p className="text-muted-foreground font-medium text-sm mt-1 max-w-[500px]">Simule, ajuste taxas e preveja cenários financeiros HSL atrelados ao Meta Ads e CRM.</p>
         </div>
-        {error && <Badge className="bg-red-500/20 text-red-400">Erro parcial nos dados</Badge>}
+        <div className="flex gap-2 relative z-10">
+          <Button variant="outline" size="sm" onClick={runFullAnalysis} disabled={aiFullLoading} className="font-bold uppercase tracking-tight text-[10px] shadow-xl">
+            {aiFullLoading ? <Loader2 size={12} className="animate-spin mr-1" /> : <Sparkles size={12} className="mr-1 text-purple-500" />}
+            Dossiê Total com IA
+          </Button>
+          <Button variant="ghost" onClick={retry} className="text-muted-foreground"><RefreshCw size={14} /></Button>
+        </div>
       </div>
 
-      {/* Bloco 1 — Meta do usuário */}
-      <Card>
-        <CardHeader><CardTitle className="text-base flex items-center gap-2"><Target size={16} />Defina sua meta</CardTitle></CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Reuniões que quero realizar</label>
-              <input type="number" min={1} value={metaReunioes} onChange={(e) => setMetaReunioes(Number(e.target.value) || 1)}
-                className="w-full text-lg font-bold bg-transparent border rounded-lg px-3 py-2 text-center" />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Ticket médio (R$)</label>
-              <input type="number" min={100} value={ticketMedio} onChange={(e) => setTicketMedio(Number(e.target.value) || 100)}
-                className="w-full text-lg font-bold bg-transparent border rounded-lg px-3 py-2 text-center" />
-              {dashData?.ticketMedio ? <p className="text-[10px] text-muted-foreground text-center">Real: {formatCurrency(dashData.ticketMedio)}</p> : null}
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Taxa de fechamento (%)</label>
-              <input type="number" min={1} max={100} value={Math.round(taxaFechamento * 100)} onChange={(e) => setTaxaFechamento((Number(e.target.value) || 1) / 100)}
-                className="w-full text-lg font-bold bg-transparent border rounded-lg px-3 py-2 text-center" />
-              {crmData?.taxaFechamento ? <p className="text-[10px] text-muted-foreground text-center">Real: {(crmData.taxaFechamento * 100).toFixed(0)}%</p> : null}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Bloco 2 — Dados ao vivo */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-        <BenchmarkCard label="CPL Atual" value={metaData?.cpl ?? null} benchmark="R$ 30–70" fonte="META" unit="R$" />
-        <BenchmarkCard label="CTR" value={metaData?.ctr ?? null} benchmark="> 1.5%" fonte="META" unit="%" />
-        <BenchmarkCard label="Frequência" value={metaData?.frequency ?? null} benchmark="< 3.5x" fonte="META" />
-        <BenchmarkCard label="Qualificação" value={crmData ? crmData.taxaQualificacao * 100 : null} benchmark="> 25%" fonte="CRM" unit="%" />
-        <BenchmarkCard label="Agendamento" value={crmData ? crmData.taxaAgendamento * 100 : null} benchmark="> 40%" fonte="CRM" unit="%" />
-        <BenchmarkCard label="No-Show" value={crmData ? crmData.taxaNoShow * 100 : null} benchmark="< 20%" fonte="CRM" unit="%" />
-        <BenchmarkCard label="Tempo Resp." value={crmData?.avgResponseTimeMinutes ?? null} benchmark="< 15 min" fonte="CRM" unit="min" />
-      </div>
-
-      {/* Bloco 3 — Comparativo Histórico */}
-      {histMeses.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle className="text-base flex items-center gap-2"><History size={16} />Comparativo Histórico</CardTitle></CardHeader>
-          <CardContent className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b">
-                  <th className="py-2 px-3 text-left text-xs text-muted-foreground font-medium">Métrica</th>
-                  {histMeses.map((h) => (
-                    <th key={h.mes} className="py-2 px-3 text-right text-xs text-muted-foreground font-medium">{mesLabel(h.mes)}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                <HistRow label="Leads" values={histMeses.map((h) => h.leads)} format="number" />
-                <HistRow label="Investimento" values={histMeses.map((h) => h.investimento)} format="currency" />
-                <HistRow label="CPL" values={histMeses.map((h) => h.cpl)} format="currency" />
-                <HistRow label="Reuniões agendadas" values={histMeses.map((h) => h.reunioesAgendadas)} format="number" />
-                <HistRow label="Reuniões feitas" values={histMeses.map((h) => h.reunioesFeitas)} format="number" />
-                <HistRow label="No-show" values={histMeses.map((h) => h.taxaNoShow)} format="percent" />
-                <HistRow label="Contratos" values={histMeses.map((h) => h.contratos)} format="number" />
-                <HistRow label="MRR" values={histMeses.map((h) => h.mrr)} format="currency" />
-                <HistRow label="LTV" values={histMeses.map((h) => h.ltv)} format="currency" />
-                <HistRow label="Ticket médio" values={histMeses.map((h) => h.ticketMedio)} format="currency" />
-                <HistRow label="Fechamento" values={histMeses.map((h) => h.taxaFechamento)} format="percent" />
-                <HistRow label="Lead → Reunião" values={histMeses.map((h) => h.taxaLeadReuniao)} format="percent" />
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Bloco 4 — Funil de projeção */}
-      <Card>
-        <CardHeader><CardTitle className="text-base flex items-center gap-2"><TrendingUp size={16} />Funil de Projeção</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <FunnelBar label="Leads necessários" atual={projection.leadsComBudgetAtual} necessario={projection.leadsNecessarios} />
-          <FunnelBar label="Qualificados necessários" atual={Math.round(projection.leadsComBudgetAtual * (crmData?.taxaQualificacao ?? 0.25))} necessario={projection.qualificadosNecessarios} />
-          <FunnelBar label="Agendamentos necessários" atual={Math.round(projection.reunioesComBudgetAtual / (1 - (crmData?.taxaNoShow ?? 0.2)))} necessario={projection.agendamentosNecessarios} />
-          <FunnelBar label="Reuniões realizadas" atual={projection.reunioesComBudgetAtual} necessario={metaReunioes} />
-        </CardContent>
-      </Card>
-
-      {/* Bloco 5 — KPIs de resultado */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card className={projection.budgetGap > 0 ? "border-red-500/30" : "border-green-500/30"}>
-          <CardContent className="pt-4 pb-3 text-center">
-            <DollarSign size={16} className="mx-auto mb-1 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground">Budget necessário</p>
-            <p className="text-xl font-bold">{formatCurrency(projection.budgetNecessario)}</p>
-            {projection.budgetGap > 0 && <p className="text-xs text-red-400">Gap: +{formatCurrency(projection.budgetGap)}</p>}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 pb-3 text-center">
-            <Users size={16} className="mx-auto mb-1 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground">Clientes projetados</p>
-            <p className="text-xl font-bold">{projection.clientesFechados.toFixed(1)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 pb-3 text-center">
-            <TrendingUp size={16} className="mx-auto mb-1 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground">Faturamento projetado</p>
-            <p className="text-xl font-bold text-green-400">{formatCurrency(projection.faturamentoProjetado)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 pb-3 text-center">
-            <AlertTriangle size={16} className="mx-auto mb-1 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground">Reuniões perdidas (no-show)</p>
-            <p className="text-xl font-bold text-red-400">{projection.reunioesPerdidas}</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Bloco 6 — Alertas */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base">Alertas e Ações ({alerts.length})</CardTitle>
-            <div className="flex bg-muted rounded-lg p-0.5">
-              {CAT_FILTER.map((f) => (
-                <button key={f} onClick={() => setAlertFilter(f)}
-                  className={`px-2 py-1 text-[10px] font-medium rounded-md transition-colors ${alertFilter === f ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
-                  {f === "todas" ? "Todas" : CAT_LABELS[f as keyof typeof CAT_LABELS]}
-                </button>
-              ))}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {filteredAlerts.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-6">
-              <CheckCircle size={24} className="text-green-500" />
-              <p className="text-sm text-muted-foreground">Nenhum alerta nesta categoria</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {filteredAlerts.map((a) => (
-                <div key={a.id} className={`flex items-start gap-3 p-3 rounded-lg border ${ALERT_COLORS[a.severidade]}`}>
-                  <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <p className="text-sm font-medium">{a.titulo}</p>
-                      <Badge variant="outline" className="text-[9px]">{CAT_LABELS[a.categoria]}</Badge>
-                    </div>
-                    <p className="text-xs">{a.descricao}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Bloco 7 — Análise IA */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Brain size={16} />
-              Análise Estratégica por IA
-            </CardTitle>
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <button
-                  onClick={() => setShowProviderSelect(!showProviderSelect)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs border rounded-lg hover:bg-muted transition-colors"
-                >
-                  {AI_LABELS[aiProvider].nome}
-                  <ChevronDown size={12} />
-                </button>
-                {showProviderSelect && (
-                  <div className="absolute right-0 top-full mt-1 bg-card border rounded-lg shadow-lg z-10 py-1 min-w-[180px]">
-                    {ALL_PROVIDERS.map((p) => (
-                      <button
-                        key={p}
-                        onClick={() => { setAiProvider(p); setShowProviderSelect(false); }}
-                        className={`w-full text-left px-3 py-2 text-xs hover:bg-muted transition-colors flex justify-between ${aiProvider === p ? "bg-muted font-medium" : ""}`}
-                      >
-                        <span>{AI_LABELS[p].nome}</span>
-                        <span className="text-muted-foreground">{AI_LABELS[p].custoEstimado}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+      <AnimatePresence>
+        {unseenAlertas.length > 0 && unseenAlertas.map((a: ProjecaoAlerta) => (
+          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} key={a.id} className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-xl flex items-center justify-between shadow-lg">
+            <div className="flex gap-3">
+              <AlertTriangle size={20} className="shrink-0 text-red-500" />
+              <div>
+                <p className="text-sm font-bold">{a.mensagem}</p>
+                {a.acoes_sugeridas && <div className="flex gap-2 mt-2">{a.acoes_sugeridas.map((ac, idx) => <Badge key={idx} className="bg-red-500/20 text-red-400 font-mono text-[9px] uppercase">{ac}</Badge>)}</div>}
               </div>
-              <button
-                onClick={runAiAnalysis}
-                disabled={aiLoading}
-                className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
-              >
-                {aiLoading ? <Loader2 size={12} className="animate-spin" /> : <Brain size={12} />}
-                {aiLoading ? "Analisando..." : "Gerar Análise"}
-              </button>
             </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {aiError && (
-            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs mb-3">
-              {aiError}
-            </div>
-          )}
-          {aiResult ? (
-            <div className="prose prose-sm dark:prose-invert max-w-none text-sm whitespace-pre-wrap leading-relaxed">
-              {aiResult}
-            </div>
-          ) : !aiLoading ? (
-            <div className="flex flex-col items-center gap-3 py-8 text-muted-foreground">
-              <Brain size={32} className="opacity-30" />
-              <p className="text-sm">Clique em &quot;Gerar Análise&quot; para receber um diagnóstico estratégico completo</p>
-              <p className="text-xs">A IA analisará todos os dados de Meta Ads, CRM e projeções para gerar um plano de ação</p>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-3 py-8">
-              <Loader2 size={32} className="animate-spin text-primary" />
-              <p className="text-sm text-muted-foreground">Gerando análise estratégica com {AI_LABELS[aiProvider].nome}...</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            <button onClick={() => { fetch("/api/projecoes/alertas", { method: "POST", body: JSON.stringify({ id: a.id }) }); mutateAlertas(); }} className="px-2 py-1 text-[10px] border border-red-500/30 rounded hover:bg-red-500/20 uppercase font-black tracking-widest transition-all">Marcar Ciente</button>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+
+      {/* RESULTADO DA IA PLENA */}
+      <AnimatePresence>
+        {aiFullResult && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+            <Card className="bg-gradient-to-r from-purple-500/10 to-transparent border-purple-500/30 shadow-[0_0_20px_rgba(168,85,247,0.15)] overflow-hidden relative">
+              <div className="absolute top-0 right-0 p-8 opacity-5"><Brain size={120} /></div>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base uppercase tracking-widest font-black text-purple-400 flex items-center gap-2"><Sparkles size={16} /> Resumo Analítico Master</CardTitle>
+                  <Button size="sm" variant="ghost" onClick={() => setAiFullResult(null)}><CheckCircle size={14} className="mr-1" /> Concluir</Button>
+                </div>
+              </CardHeader>
+              <CardContent className="text-sm whitespace-pre-wrap leading-relaxed max-h-[500px] overflow-y-auto relative z-10">{aiFullResult}</CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* ESQUERDA - Input e Funil */}
+        <div className="lg:col-span-8 space-y-6">
+          <Card className="bg-card/40 backdrop-blur-xl border border-primary/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+            <CardContent className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase font-black text-muted-foreground tracking-widest">MRR Meta Mensal</label>
+                <CurrencyInput value={metaMRR} onChange={setMetaMRR} className="w-full text-2xl font-black bg-transparent border-b-2 border-primary/50 outline-none pb-1 focus:border-primary transition-colors text-foreground" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase font-black text-muted-foreground tracking-widest">LTV Absoluto Alvo</label>
+                <CurrencyInput value={faturamentoLTV} onChange={setFaturamentoLTV} className="w-full text-2xl font-black bg-transparent border-b-2 border-primary/50 outline-none pb-1 focus:border-primary transition-colors text-foreground" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase font-black text-muted-foreground tracking-widest">Entrada Direta</label>
+                <CurrencyInput value={entrada} onChange={setEntrada} className="w-full text-2xl font-black bg-transparent border-b-2 border-primary/50 outline-none pb-1 focus:border-primary transition-colors text-foreground" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card/40 backdrop-blur-md overflow-hidden relative group">
+            <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-110 transition-transform"><TrendingUp size={100} /></div>
+            <CardHeader className="border-b border-border/30 bg-muted/10 pb-4">
+              <CardTitle className="text-sm uppercase font-black tracking-widest">Mapeamento Matemático Reverso</CardTitle>
+            </CardHeader>
+            <CardContent className="p-6 relative z-10">
+              <div className="flex flex-col md:flex-row items-center font-mono gap-4 w-full">
+                <div className="flex-1 text-center bg-muted/20 p-4 rounded-xl border border-border/40">
+                  <p className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Volumetria de Leads</p>
+                  <p className="text-3xl font-black">{projection.leadsNecessarios}</p>
+                </div>
+                <div className="text-muted-foreground text-[10px]">{Math.round(effective.taxaLeadReuniao * 100)}%</div>
+                <div className="flex-1 text-center bg-muted/20 p-4 rounded-xl border border-border/40">
+                  <p className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Reuniões Efetivas</p>
+                  <p className="text-3xl font-black">{projection.reunioesNecessarias}</p>
+                </div>
+                <div className="text-muted-foreground text-[10px]">{Math.round(effective.taxaReuniaoFechamento * 100)}%</div>
+                <div className="flex-1 text-center bg-emerald-500/10 p-4 rounded-xl border border-emerald-500/30">
+                  <p className="text-[9px] uppercase tracking-widest text-emerald-500 font-black mb-1">Contratos Novos</p>
+                  <p className="text-3xl font-black text-emerald-400">{projection.clientesNecessarios}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6">
+                <div className="p-3 bg-red-500/5 border border-red-500/15 rounded-xl flex flex-col justify-between">
+                  <span className="text-[9px] uppercase text-red-400 font-bold tracking-widest mb-1">Perdas (No-Show)</span>
+                  <span className="text-xl font-bold font-mono">{projection.reunioesPerdidas}</span>
+                </div>
+                <div className="p-3 bg-blue-500/5 border border-blue-500/15 rounded-xl flex flex-col justify-between">
+                  <span className="text-[9px] uppercase text-blue-400 font-bold tracking-widest mb-1">Budget Ads Mínimo</span>
+                  <span className="text-xl font-bold font-mono">{formatCurrency(projection.budgetNecessario)}</span>
+                </div>
+                <div className="p-3 bg-yellow-500/5 border border-yellow-500/15 rounded-xl flex flex-col justify-between">
+                  <span className="text-[9px] uppercase text-yellow-400 font-bold tracking-widest mb-1">Custo Reunião</span>
+                  <span className="text-xl font-bold font-mono">{formatCurrency(projection.custoPorReuniaoProj)}</span>
+                </div>
+                <div className="p-3 bg-purple-500/5 border border-purple-500/15 rounded-xl flex flex-col justify-between">
+                  <span className="text-[9px] uppercase text-purple-400 font-bold tracking-widest mb-1">Apenas via CPL</span>
+                  <span className="text-xl font-bold font-mono">{formatCurrency(projection.budgetViaCPL)}</span>
+                </div>
+              </div>
+              {gargaloTrafego && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4 p-3 bg-rose-500/20 border border-rose-500/40 rounded-xl flex items-center justify-between">
+                  <div className="space-y-1">
+                    <p className="text-xs font-black uppercase text-rose-400 tracking-tighter">Anomalia Frontal Detectada: CPL Alto vs Volume Baixo</p>
+                    <p className="text-[10px] text-muted-foreground font-mono">Trafego está custando caro e não trazendo a volumetria reversa necessária.</p>
+                  </div>
+                  <Link href="/trafego/estrutura" className="px-3 py-1.5 bg-rose-500 text-white font-bold text-[10px] uppercase tracking-widest rounded-lg hover:bg-rose-600 transition-colors shadow">Auditar Ads Ad-Sets</Link>
+                </motion.div>
+              )}
+              {gargaloCRM && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4 p-3 bg-orange-500/20 border border-orange-500/40 rounded-xl flex items-center justify-between">
+                  <div className="space-y-1">
+                    <p className="text-xs font-black uppercase text-orange-400 tracking-tighter">Anomalia End-Funnel: Conversão Baixa no Fechamento</p>
+                    <p className="text-[10px] text-muted-foreground font-mono">Reuniões ocorrendo com alta taxa, porém a ponta (Closers) não atinge cota.</p>
+                  </div>
+                  <Link href="/crm" className="px-3 py-1.5 bg-orange-500 text-white font-bold text-[10px] uppercase tracking-widest rounded-lg hover:bg-orange-600 transition-colors shadow">Monitorar Pipeline e Deals</Link>
+                </motion.div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* DIREITA - Status, BreakEven e LTV */}
+        <div className="lg:col-span-4 space-y-6">
+          <Card className="bg-card/40 backdrop-blur-md">
+            <CardHeader className="pb-3 border-b border-border/30"><CardTitle className="text-sm uppercase tracking-widest font-black">Break-Even & LTV Engine</CardTitle></CardHeader>
+            <CardContent className="p-4 space-y-4 pt-5">
+              {breakEven ? (
+                <div className="bg-muted/20 p-4 rounded-xl border border-border/40 text-center">
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Ponto de Equilíbrio (MRR)</p>
+                  <p className="text-3xl font-black mb-2">{formatCurrency(breakEven.break_even?.mrr_break_even || 0)}</p>
+                  {breakEven.break_even?.distancia_break_even > 0 ? (
+                    <Badge className="bg-red-500/15 text-red-500">Deficit {formatCurrency(breakEven.break_even.distancia_break_even)}</Badge>
+                  ) : (
+                    <Badge className="bg-emerald-500/15 text-emerald-400">Superavit de Cash</Badge>
+                  )}
+                </div>
+              ) : <Loader2 className="animate-spin text-muted-foreground mx-auto my-4" />}
+
+              {ltv ? (
+                <div className="bg-muted/20 p-4 rounded-xl border border-border/40 text-center">
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">LTV Estimado Total</p>
+                  <p className="text-3xl font-black mb-2 text-cyan-400">{formatCurrency(ltv.ltv_total_carteira || 0)}</p>
+                  <Badge variant="outline" className="text-muted-foreground">Lifespan Médio: {ltv.tempo_medio_permanencia || 0} meses</Badge>
+                </div>
+              ) : <Loader2 className="animate-spin text-muted-foreground mx-auto my-4" />}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card/40 backdrop-blur-md overflow-hidden">
+            <CardHeader className="bg-primary pb-3 text-primary-foreground"><CardTitle className="text-sm uppercase tracking-widest font-black flex items-center gap-2"><SlidersHorizontal size={14} /> Simulador Dinâmico</CardTitle></CardHeader>
+            <CardContent className="p-4 space-y-4 mt-2">
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-widest font-bold">Investimento Extra</label>
+                <CurrencyInput value={simParams.orcamento} onChange={(v) => setSimParams(p => ({ ...p, orcamento: v }))} className="w-full text-sm font-mono border-b py-1" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-widest font-bold">Escala de Qualificação ({simParams.qualificacao}%)</label>
+                <input type="range" className="w-full h-1 accent-primary" min={1} max={100} value={simParams.qualificacao} onChange={(e) => setSimParams(p => ({ ...p, qualificacao: Number(e.target.value) }))} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-widest font-bold">Resgatar No-show (Perda de {simParams.noshow}%)</label>
+                <input type="range" className="w-full h-1 accent-red-500" min={0} max={60} value={simParams.noshow} onChange={(e) => setSimParams(p => ({ ...p, noshow: Number(e.target.value) }))} />
+              </div>
+              <Button className="w-full shadow-lg" onClick={runSimulacao} disabled={simLoading || metaMRR === 0}>
+                {simLoading ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} className="mr-1" />} Submeter ao Contexto
+              </Button>
+              {simResultado && (
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="pt-2 border-t border-border/30 mt-2">
+                  <p className="text-xs text-muted-foreground text-center">Contratos Potenciais <strong className="text-foreground">{simResultado?.funil?.contratos_projetados}</strong></p>
+                </motion.div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }

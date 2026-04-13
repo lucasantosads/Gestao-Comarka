@@ -1,0 +1,84 @@
+{
+  "crons": [
+    {
+      "path": "/api/comarka-pro/calcular-automatico",
+      "schedule": "0 9 * * 1"
+    },
+    {
+      "path": "/api/comarka-pro/encerrar-mes",
+      "schedule": "0 8 1 * *"
+    },
+    {
+      "path": "/api/clientes/calcular-score",
+      "schedule": "0 11 * * 1"
+    },
+    {
+      "path": "/api/clientes/analise-risco",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/clientes/alertas-campanha",
+      "schedule": "0 12 * * 1-5"
+    },
+    {
+      "path": "/api/projecoes/verificar-alertas",
+      "schedule": "0 8 * * 1-5"
+    },
+    {
+      "path": "/api/projecoes/registrar-acuracia",
+      "schedule": "0 4 1 * *"
+    },
+    {
+      "path": "/api/projecoes/meta-closers",
+      "schedule": "0 5 1 * *"
+    },
+    {
+      "path": "/api/trafego/verificar-regras",
+      "schedule": "0 */2 * * 1-5"
+    },
+    {
+      "path": "/api/trafego/ciclo-vida-criativos",
+      "schedule": "0 6 * * 1-5"
+    },
+    {
+      "path": "/api/trafego/performance-temporal",
+      "schedule": "0 5 * * 1-5"
+    },
+    {
+      "path": "/api/financeiro/alertas-cobranca",
+      "schedule": "0 10 1 * *"
+    },
+    {
+      "path": "/api/financeiro/calcular-margem",
+      "schedule": "0 9 * * 1"
+    },
+    {
+      "path": "/api/financeiro/projecao-fluxo",
+      "schedule": "0 8 1 * *"
+    },
+    {
+      "path": "/api/asaas/sync",
+      "schedule": "0 7 * * 1-5"
+    },
+    {
+      "path": "/api/sistema/health-check",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/sistema/backup",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/sistema/rate-limits",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/sistema/reprocessar-fila",
+      "schedule": "0 7 * * 1-5"
+    },
+    {
+      "path": "/api/clientes/verificar-consistencia",
+      "schedule": "0 6 * * 1-5"
+    }
+  ]
+}

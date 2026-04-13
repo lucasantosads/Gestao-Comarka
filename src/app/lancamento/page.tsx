@@ -16,7 +16,8 @@ import {
 } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/format";
 import { toast } from "sonner";
-import { Save, Pencil, Plus, Trash2 } from "lucide-react";
+import { Save, Pencil, Plus, Trash2, RotateCcw, ChevronDown, ChevronUp, Filter } from "lucide-react";
+import { CurrencyInput } from "@/components/currency-input";
 
 const ORIGENS = ["Tráfego Pago", "Orgânico", "Social Selling", "Indicação", "Workshop"];
 
@@ -27,6 +28,7 @@ interface ContratoForm {
   valor_entrada: number;
   mrr: number;
   meses_contrato: number;
+  entrada_e_primeiro_mes: boolean;
   valor_variavel: boolean;
   valores_mensais: number[];
   obs: string;
@@ -39,6 +41,7 @@ const emptyContrato: ContratoForm = {
   valor_entrada: 0,
   mrr: 0,
   meses_contrato: 6,
+  entrada_e_primeiro_mes: true,
   valor_variavel: false,
   valores_mensais: [],
   obs: "",
@@ -56,6 +59,62 @@ export default function LancamentoPage() {
   const [existingLancId, setExistingLancId] = useState<string | null>(null);
   const [existingContratoIds, setExistingContratoIds] = useState<string[]>([]);
 
+  // Histórico de lançamentos (painel recolhível no fim da página)
+  interface HistRow {
+    id: string;
+    data: string;
+    closer_id: string;
+    reunioes_marcadas: number;
+    reunioes_feitas: number;
+    ganhos: number;
+    mrr_dia: number;
+    ltv: number;
+  }
+  const [histOpen, setHistOpen] = useState(false);
+  const [histRows, setHistRows] = useState<HistRow[]>([]);
+  const [histVisibleCount, setHistVisibleCount] = useState(5);
+  const [histCloserFilter, setHistCloserFilter] = useState<string>("all");
+  const [histPeriodo, setHistPeriodo] = useState<"dia" | "semana" | "mes" | "tudo">("tudo");
+  const [histDate, setHistDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [histLoading, setHistLoading] = useState(false);
+
+  async function loadHistorico() {
+    setHistLoading(true);
+    let q = supabase.from("lancamentos_diarios")
+      .select("id,data,closer_id,reunioes_marcadas,reunioes_feitas,ganhos,mrr_dia,ltv")
+      .order("data", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (histCloserFilter !== "all") q = q.eq("closer_id", histCloserFilter);
+
+    if (histPeriodo === "dia") {
+      q = q.eq("data", histDate);
+    } else if (histPeriodo === "semana") {
+      const d = new Date(histDate + "T00:00:00");
+      const dow = d.getDay();
+      const start = new Date(d); start.setDate(d.getDate() - dow);
+      const end = new Date(start); end.setDate(start.getDate() + 6);
+      q = q.gte("data", start.toISOString().split("T")[0]).lte("data", end.toISOString().split("T")[0]);
+    } else if (histPeriodo === "mes") {
+      const mes = histDate.slice(0, 7);
+      const start = `${mes}-01`;
+      const endDate = new Date(Number(mes.slice(0, 4)), Number(mes.slice(5, 7)), 0);
+      const end = endDate.toISOString().split("T")[0];
+      q = q.gte("data", start).lte("data", end);
+    }
+
+    const { data: rows } = await q;
+    setHistRows((rows || []) as HistRow[]);
+    setHistVisibleCount(5);
+    setHistLoading(false);
+  }
+
+  useEffect(() => {
+    if (histOpen) loadHistorico();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [histOpen, histCloserFilter, histPeriodo, histDate]);
+
   const noShow = Math.max(0, reunioesAgendadas - reunioesFeitas);
 
   function getContratoMrr(c: ContratoForm) {
@@ -64,11 +123,25 @@ export default function LancamentoPage() {
     }
     return c.mrr;
   }
+  /**
+   * Valor total do projeto (LTV) respeitando entrada_e_primeiro_mes:
+   *  - true  → entrada + mrr × (meses - 1)  (entrada já é o 1º mês)
+   *  - false → entrada + mrr × meses        (entrada separada do recorrente)
+   *
+   * Quando valor_variavel=true, valores_mensais já reflete cada mês, então
+   * a entrada é sempre somada por fora (quando não for o primeiro mês).
+   */
   function getContratoLtv(c: ContratoForm) {
     if (c.valor_variavel && c.valores_mensais.length > 0) {
-      return c.valores_mensais.reduce((s, v) => s + v, 0);
+      const somaMensal = c.valores_mensais.reduce((s, v) => s + v, 0);
+      // Se entrada == 1º mês, assume que valores_mensais[0] já é a entrada.
+      // Caso contrário, adiciona a entrada por fora.
+      return c.entrada_e_primeiro_mes ? somaMensal : somaMensal + c.valor_entrada;
     }
-    return c.mrr * c.meses_contrato;
+    if (c.entrada_e_primeiro_mes) {
+      return c.valor_entrada + c.mrr * Math.max(0, c.meses_contrato - 1);
+    }
+    return c.valor_entrada + c.mrr * c.meses_contrato;
   }
 
   const totalMrr = contratos.reduce((s, c) => s + getContratoMrr(c), 0);
@@ -123,6 +196,7 @@ export default function LancamentoPage() {
             valor_entrada: Number(c.valor_entrada),
             mrr: Number(c.mrr),
             meses_contrato: c.meses_contrato,
+            entrada_e_primeiro_mes: c.entrada_e_primeiro_mes ?? true,
             valor_variavel: false,
             valores_mensais: [],
             obs: c.obs || "",
@@ -189,6 +263,7 @@ export default function LancamentoPage() {
     const mesRef = data.slice(0, 7);
 
     // 1. Salvar lancamento diario
+    // mes_referencia é GENERATED — Postgres calcula a partir de `data`, não enviar.
     const lancPayload = {
       closer_id: closerId,
       data,
@@ -226,6 +301,10 @@ export default function LancamentoPage() {
         valor_entrada: c.valor_entrada,
         mrr: getContratoMrr(c),
         meses_contrato: c.meses_contrato,
+        // valor_total_projeto é sempre calculado no frontend (TAREFA 3) —
+        // respeita o flag entrada_e_primeiro_mes. Backend nunca recalcula.
+        valor_total_projeto: getContratoLtv(c),
+        entrada_e_primeiro_mes: c.entrada_e_primeiro_mes,
         data_fechamento: data,
         obs: [c.obs, c.valor_variavel ? "Valores: " + c.valores_mensais.map((v) => "R$" + v.toFixed(0)).join(", ") : ""].filter(Boolean).join(" | ") || null,
       }));
@@ -245,6 +324,31 @@ export default function LancamentoPage() {
       .eq("mes_referencia", mesRef);
     setExistingContratoIds((cts || []).map((c: { id: string }) => c.id));
 
+    setSaving(false);
+  }
+
+  async function handleUndo() {
+    if (!existingLancId) return;
+    if (!confirm("Desfazer este lançamento? Isso vai apagar as reuniões e contratos desta data/closer. Não pode ser revertido.")) return;
+    setSaving(true);
+
+    // 1. Apaga contratos associados
+    if (existingContratoIds.length > 0) {
+      const { error: cErr } = await supabase.from("contratos").delete().in("id", existingContratoIds);
+      if (cErr) { toast.error("Erro ao apagar contratos: " + cErr.message); setSaving(false); return; }
+    }
+
+    // 2. Apaga o lançamento diário
+    const { error: lErr } = await supabase.from("lancamentos_diarios").delete().eq("id", existingLancId);
+    if (lErr) { toast.error("Erro ao apagar lançamento: " + lErr.message); setSaving(false); return; }
+
+    // 3. Reseta o formulário
+    setReunioesAgendadas(0);
+    setReunioesFeitas(0);
+    setContratos([]);
+    setExistingLancId(null);
+    setExistingContratoIds([]);
+    toast.success("Lançamento desfeito");
     setSaving(false);
   }
 
@@ -354,12 +458,29 @@ export default function LancamentoPage() {
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Valor Entrada (R$)</Label>
-                  <Input type="number" min={0} step={0.01} value={c.valor_entrada} onChange={(e) => updateContrato(i, "valor_entrada", Number(e.target.value))} />
+                  <Label className="text-xs">Valor Entrada</Label>
+                  <CurrencyInput value={c.valor_entrada} onChange={(v) => updateContrato(i, "valor_entrada", v)} />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Meses Contrato</Label>
                   <Input type="number" min={1} value={c.meses_contrato} onChange={(e) => updateContrato(i, "meses_contrato", Number(e.target.value))} />
+                </div>
+                <div className="col-span-2 space-y-1">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      id={`ent-1m-${i}`}
+                      checked={c.entrada_e_primeiro_mes}
+                      onChange={(e) => updateContrato(i, "entrada_e_primeiro_mes", e.target.checked)}
+                      className="rounded border-muted-foreground accent-primary"
+                    />
+                    <span className="text-xs font-medium">Entrada é o primeiro mês do MRR</span>
+                  </label>
+                  <p className="text-[10px] text-muted-foreground pl-6">
+                    {c.entrada_e_primeiro_mes
+                      ? "Entrada = 1° mês do contrato. Valor Total = Entrada + MRR × (Meses − 1)"
+                      : "Entrada separada do MRR. Valor Total = Entrada + MRR × Meses"}
+                  </p>
                 </div>
               </div>
 
@@ -380,29 +501,26 @@ export default function LancamentoPage() {
               {!c.valor_variavel ? (
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <Label className="text-xs">MRR Mensal (R$)</Label>
-                    <Input type="number" min={0} step={0.01} value={c.mrr} onChange={(e) => updateContrato(i, "mrr", Number(e.target.value))} />
+                    <Label className="text-xs">MRR Mensal</Label>
+                    <CurrencyInput value={c.mrr} onChange={(v) => updateContrato(i, "mrr", v)} />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">Valor Total</Label>
                     <div className="h-9 px-3 flex items-center bg-muted rounded-md text-sm font-medium">
-                      {formatCurrency(c.mrr * c.meses_contrato)}
+                      {formatCurrency(getContratoLtv(c))}
                     </div>
                   </div>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <Label className="text-xs">Valor por mes (R$)</Label>
+                  <Label className="text-xs">Valor por mes</Label>
                   <div className="grid grid-cols-3 gap-2">
                     {c.valores_mensais.map((v, mi) => (
                       <div key={mi} className="space-y-0.5">
                         <span className="text-[10px] text-muted-foreground">Mes {mi + 1}</span>
-                        <Input
-                          type="number"
-                          min={0}
-                          step={0.01}
+                        <CurrencyInput
                           value={v}
-                          onChange={(e) => updateValorMensal(i, mi, Number(e.target.value))}
+                          onChange={(val) => updateValorMensal(i, mi, val)}
                           className="h-8 text-sm"
                         />
                       </div>
@@ -460,11 +578,135 @@ export default function LancamentoPage() {
         </CardContent>
       </Card>
 
-      {/* Salvar */}
-      <Button onClick={handleSave} disabled={saving || !closerId} className="w-full" size="lg">
-        <Save size={18} className="mr-2" />
-        {saving ? "Salvando..." : existingLancId ? "Atualizar Lançamento" : "Salvar Lançamento"}
-      </Button>
+      {/* Salvar + Desfazer */}
+      <div className="flex gap-2">
+        <Button onClick={handleSave} disabled={saving || !closerId} className="flex-1" size="lg">
+          <Save size={18} className="mr-2" />
+          {saving ? "Salvando..." : existingLancId ? "Atualizar Lançamento" : "Salvar Lançamento"}
+        </Button>
+        {existingLancId && (
+          <Button
+            onClick={handleUndo}
+            disabled={saving}
+            variant="outline"
+            size="lg"
+            className="text-destructive border-destructive/40 hover:bg-destructive/10"
+          >
+            <RotateCcw size={18} className="mr-2" />
+            Desfazer
+          </Button>
+        )}
+      </div>
+
+      {/* Histórico de lançamentos — painel recolhível */}
+      <Card>
+        <button
+          type="button"
+          onClick={() => setHistOpen((v) => !v)}
+          className="w-full flex items-center justify-between p-4 hover:bg-muted/30 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <Filter size={14} className="text-muted-foreground" />
+            <span className="text-sm font-semibold">Últimos lançamentos</span>
+            {histRows.length > 0 && (
+              <span className="text-[11px] text-muted-foreground">
+                ({Math.min(histVisibleCount, histRows.length)} de {histRows.length})
+              </span>
+            )}
+          </div>
+          {histOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+
+        {histOpen && (
+          <CardContent className="pt-0 space-y-4">
+            {/* Filtros */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Closer</Label>
+                <Select value={histCloserFilter} onValueChange={setHistCloserFilter}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    {closers.map((c) => (<SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Período</Label>
+                <Select value={histPeriodo} onValueChange={(v) => setHistPeriodo(v as typeof histPeriodo)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="tudo">Tudo</SelectItem>
+                    <SelectItem value="dia">Dia</SelectItem>
+                    <SelectItem value="semana">Semana</SelectItem>
+                    <SelectItem value="mes">Mês</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {histPeriodo !== "tudo" && (
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {histPeriodo === "dia" ? "Data" : histPeriodo === "semana" ? "Semana (qualquer dia)" : "Mês (qualquer dia)"}
+                  </Label>
+                  <Input type="date" value={histDate} onChange={(e) => setHistDate(e.target.value)} />
+                </div>
+              )}
+            </div>
+
+            {/* Tabela */}
+            {histLoading ? (
+              <p className="text-xs text-muted-foreground text-center py-6">Carregando...</p>
+            ) : histRows.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-6">Nenhum lançamento no período</p>
+            ) : (
+              <>
+                <div className="overflow-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b text-muted-foreground">
+                        <th className="px-2 py-2 text-left font-medium">Data</th>
+                        <th className="px-2 py-2 text-left font-medium">Closer</th>
+                        <th className="px-2 py-2 text-right font-medium">Agend.</th>
+                        <th className="px-2 py-2 text-right font-medium">Feitas</th>
+                        <th className="px-2 py-2 text-right font-medium">Contratos</th>
+                        <th className="px-2 py-2 text-right font-medium">MRR</th>
+                        <th className="px-2 py-2 text-right font-medium">LTV</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {histRows.slice(0, histVisibleCount).map((r) => {
+                        const closer = closers.find((c) => c.id === r.closer_id);
+                        return (
+                          <tr key={r.id} className="border-b hover:bg-muted/30">
+                            <td className="px-2 py-2">{new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR")}</td>
+                            <td className="px-2 py-2">{closer?.nome || "—"}</td>
+                            <td className="px-2 py-2 text-right">{r.reunioes_marcadas}</td>
+                            <td className="px-2 py-2 text-right">{r.reunioes_feitas}</td>
+                            <td className="px-2 py-2 text-right font-medium">{r.ganhos}</td>
+                            <td className="px-2 py-2 text-right">{formatCurrency(Number(r.mrr_dia))}</td>
+                            <td className="px-2 py-2 text-right">{formatCurrency(Number(r.ltv))}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {histVisibleCount < histRows.length && (
+                  <div className="flex justify-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setHistVisibleCount((c) => c + 5)}
+                    >
+                      Carregar mais 5
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
+        )}
+      </Card>
     </div>
   );
 }

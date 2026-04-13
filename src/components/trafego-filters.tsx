@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+
+const PERIODO_STORAGE_KEY = "trafego_periodo_filtro";
 
 interface TrafegoFiltersProps {
   periodo: string;
@@ -15,9 +17,12 @@ interface TrafegoFiltersProps {
   campanhas?: { id: string; name: string }[];
   campanhaFiltro?: string;
   onCampanhaChange?: (c: string) => void;
+  somenteComDados?: boolean;
+  onSomenteComDadosChange?: (v: boolean) => void;
 }
 
 const PERIODOS = [
+  { value: "month", label: "Este mês" },
   { value: "7", label: "7d" },
   { value: "30", label: "30d" },
   { value: "90", label: "3 meses" },
@@ -29,6 +34,7 @@ export function TrafegoFilters({
   dataInicio, dataFim, onDataInicioChange, onDataFimChange,
   statusFiltro, onStatusChange,
   campanhas, campanhaFiltro, onCampanhaChange,
+  somenteComDados, onSomenteComDadosChange,
 }: TrafegoFiltersProps) {
   return (
     <div className="flex flex-wrap items-end gap-3">
@@ -81,24 +87,56 @@ export function TrafegoFilters({
           ))}
         </select>
       )}
+
+      {/* Toggle: Somente com dados */}
+      {onSomenteComDadosChange && (
+        <button
+          onClick={() => onSomenteComDadosChange(!somenteComDados)}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-all",
+            somenteComDados
+              ? "gradient-primary text-white border-transparent"
+              : "border-border dark:border-white/[0.08] text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <span className={cn("w-3 h-3 rounded-full border-2 transition-all", somenteComDados ? "bg-white border-white/50" : "border-muted-foreground/40")} />
+          Somente com dados
+        </button>
+      )}
     </div>
   );
 }
 
+function getMonthStart() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
 export function useTrafegoFilters() {
   const hoje = new Date().toISOString().split("T")[0];
-  const [periodo, setPeriodo] = useState("30");
-  const [dataInicio, setDataInicio] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split("T")[0];
-  });
+  const [periodo, setPeriodo] = useState("month");
+  const [dataInicio, setDataInicio] = useState(getMonthStart);
   const [dataFim, setDataFim] = useState(hoje);
   const [statusFiltro, setStatusFiltro] = useState("ACTIVE");
   const [campanhaFiltro, setCampanhaFiltro] = useState("all");
+  const [somenteComDados, setSomenteComDados] = useState(true);
+
+  // Hidrata o período a partir do localStorage e recalcula as datas.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem(PERIODO_STORAGE_KEY);
+    if (saved && saved !== "month") handlePeriodoChange(saved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handlePeriodoChange = (p: string) => {
     setPeriodo(p);
+    if (typeof window !== "undefined") localStorage.setItem(PERIODO_STORAGE_KEY, p);
     if (p !== "custom") {
-      if (p === "0") {
+      if (p === "month") {
+        setDataInicio(getMonthStart());
+        setDataFim(hoje);
+      } else if (p === "0") {
         setDataInicio(hoje);
         setDataFim(hoje);
       } else if (p === "1") {
@@ -117,8 +155,8 @@ export function useTrafegoFilters() {
   };
 
   return {
-    periodo, dataInicio, dataFim, statusFiltro, campanhaFiltro,
+    periodo, dataInicio, dataFim, statusFiltro, campanhaFiltro, somenteComDados,
     setPeriodo: handlePeriodoChange,
-    setDataInicio, setDataFim, setStatusFiltro, setCampanhaFiltro,
+    setDataInicio, setDataFim, setStatusFiltro, setCampanhaFiltro, setSomenteComDados,
   };
 }

@@ -178,44 +178,57 @@ export default function SdrPage() {
   });
   const [filtroStatus, setFiltroStatus] = useState("all");
 
-  // Load SDRs initially
+  // Load SDRs initially — parallel
   useEffect(() => {
-    supabase
-      .from("sdrs")
-      .select("*")
-      .eq("ativo", true)
-      .order("nome")
-      .then(({ data }) => {
-        const list = (data || []) as Sdr[];
-        setSdrs(list);
-        if (list.length > 0 && !sdrId) setSdrId(list[0].id);
-      });
-    supabase
-      .from("closers")
-      .select("*")
-      .eq("ativo", true)
-      .order("nome")
-      .then(({ data }) => setClosers((data || []) as Closer[]));
+    Promise.all([
+      supabase.from("sdrs").select("*").eq("ativo", true).order("nome"),
+      supabase.from("closers").select("*").eq("ativo", true).order("nome"),
+    ]).then(([{ data: sdrsData }, { data: closersData }]) => {
+      const list = (sdrsData || []) as Sdr[];
+      setSdrs(list);
+      if (list.length > 0 && !sdrId) setSdrId(list[0].id);
+      setClosers((closersData || []) as Closer[]);
+    });
+  }, []);
+
+  // GHL SDR funnel
+  const [ghlFunnel, setGhlFunnel] = useState<{ stages: { name: string; count: number; pct: number }[]; total: number; taxaQualificacao: number; taxaDesqualificacao: number } | null>(null);
+  const [ghlAlerts, setGhlAlerts] = useState<{ msg: string }[]>([]);
+  useEffect(() => {
+    fetch("/api/ghl-funnel")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.sdr) setGhlFunnel(data.sdr);
+        if (data.sdrAlerts) setGhlAlerts(data.sdrAlerts);
+      })
+      .catch(() => {});
   }, []);
 
   const loadData = useCallback(async () => {
     if (!sdrId) return;
     setLoading(true);
 
-    const [{ data: lancs }, { data: metaData }, { data: reuns }, { data: crmData }, { data: configData }, { data: closerLancs }] =
+    const hoje = new Date().toISOString().split("T")[0];
+    const lastDay = new Date(parseInt(mes.split("-")[0]), parseInt(mes.split("-")[1]), 0);
+    const until = `${mes}-${String(lastDay.getDate()).padStart(2, "0")}`;
+    const adsUntil = mes === hoje.slice(0, 7) ? hoje : until;
+
+    const [{ data: lancs }, { data: metaData }, { data: reuns }, { data: crmData }, { data: closerLancs }, { data: adsPerf }] =
       await Promise.all([
         supabase.from("lancamentos_sdr").select("*").eq("sdr_id", sdrId).eq("mes_referencia", mes).order("data", { ascending: false }),
         supabase.from("metas_sdr").select("*").eq("sdr_id", sdrId).eq("mes_referencia", mes).single(),
         supabase.from("reunioes_sdr").select("*").eq("sdr_id", sdrId).eq("mes_referencia", mes).order("data_reuniao", { ascending: false }),
-        supabase.from("leads_crm").select("*").eq("mes_referencia", mes),
-        supabase.from("config_mensal").select("leads_totais").eq("mes_referencia", mes).single(),
+        supabase.from("leads_crm").select("*").eq("mes_referencia", mes).limit(1000),
         supabase.from("lancamentos_diarios").select("reunioes_marcadas,reunioes_feitas").eq("mes_referencia", mes),
+        supabase.from("ads_performance").select("leads").gte("data_ref", mes + "-01").lte("data_ref", adsUntil),
       ]);
 
     setLancamentos((lancs || []) as LancamentoSdr[]);
     setReunioes((reuns || []) as ReuniaoSdr[]);
     setAllCrmLeads((crmData || []) as LeadCrm[]);
-    setLeadsTotais(Number((configData as { leads_totais: number } | null)?.leads_totais ?? 0));
+    // Use Meta leads when available
+    const metaLeadsTotal = (adsPerf || []).reduce((s: number, r: { leads: number }) => s + Number(r.leads), 0);
+    setLeadsTotais(metaLeadsTotal > 0 ? metaLeadsTotal : (crmData || []).length);
     const clLancs = (closerLancs || []) as { reunioes_marcadas: number; reunioes_feitas: number }[];
     setDashMarcadas(clLancs.reduce((s, l) => s + l.reunioes_marcadas, 0));
     setDashFeitas(clLancs.reduce((s, l) => s + l.reunioes_feitas, 0));
@@ -407,7 +420,9 @@ export default function SdrPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Acompanhamento SDR</h1>
+          <h1 className="text-2xl font-bold">
+            {sdrs.length === 1 ? `Acompanhamento — ${sdrs[0].nome}` : sdrs.find((s) => s.id === sdrId)?.nome ? `Acompanhamento — ${sdrs.find((s) => s.id === sdrId)?.nome}` : "Acompanhamento SDR"}
+          </h1>
           <p className="text-sm text-muted-foreground">Mes atual</p>
         </div>
         <div className="flex items-center gap-3">
@@ -433,6 +448,22 @@ export default function SdrPage() {
           </Button>
         </div>
       </div>
+
+      {/* Alerta lançamento — só em dia útil */}
+      {(() => {
+        const now = new Date();
+        const isDiaUtil = now.getDay() >= 1 && now.getDay() <= 5;
+        if (!isDiaUtil) return null;
+
+        const hoje = now.toISOString().split("T")[0];
+        const temLancHoje = lancamentos.some((l) => l.data === hoje);
+        if (!temLancHoje) return (
+          <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-sm text-yellow-400">
+            Nenhum lancamento registrado hoje. Lembre o SDR de registrar o dia antes das 18h.
+          </div>
+        );
+        return null;
+      })()}
 
       {/* KPIs do SDR — mesma fonte da dashboard */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -779,6 +810,40 @@ export default function SdrPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Funil GHL Real */}
+      {ghlFunnel && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Funil SDR — GHL (tempo real)</CardTitle>
+              <Badge variant="outline" className="text-[9px]">{ghlFunnel.total} leads</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {ghlFunnel.stages.map((s) => (
+              <div key={s.name} className="space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">{s.name}</span>
+                  <span className="font-medium">{s.count} <span className="text-muted-foreground">({s.pct.toFixed(1)}%)</span></span>
+                </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full ${s.name.toLowerCase().includes("desqualificado") ? "bg-red-500" : s.name.toLowerCase().includes("qualificado") || s.name.toLowerCase().includes("agendou") ? "bg-green-500" : "bg-blue-500"}`} style={{ width: `${Math.min(s.pct, 100)}%` }} />
+                </div>
+              </div>
+            ))}
+            {ghlAlerts.length > 0 && (
+              <div className="border-t pt-3 mt-3 space-y-2">
+                {ghlAlerts.map((a, i) => (
+                  <div key={i} className="text-xs p-2 rounded bg-yellow-500/10 border border-yellow-500/20 text-yellow-400">
+                    ⚠️ {a.msg}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

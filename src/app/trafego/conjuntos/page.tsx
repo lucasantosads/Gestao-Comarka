@@ -1,35 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
-import type { AdsMetadata, AdsPerformance, LeadAdsAttribution } from "@/types/database";
+import type { AdsMetadata } from "@/types/database";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import { TrafegoFilters, useTrafegoFilters } from "@/components/trafego-filters";
+import { useTrafegoData } from "@/hooks/use-trafego-data";
 
 export default function TrafegoConjuntosPage() {
   const filters = useTrafegoFilters();
-  const [metadata, setMetadata] = useState<AdsMetadata[]>([]);
-  const [performance, setPerformance] = useState<AdsPerformance[]>([]);
-  const [leads, setLeads] = useState<LeadAdsAttribution[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: tData, isLoading: loading } = useTrafegoData(filters.dataInicio, filters.dataFim, filters.statusFiltro);
 
-  useEffect(() => { loadData(); }, [filters.dataInicio, filters.dataFim, filters.statusFiltro]);
-
-  async function loadData() {
-    setLoading(true);
-    let metaQuery = supabase.from("ads_metadata").select("*");
-    if (filters.statusFiltro !== "all") metaQuery = metaQuery.eq("status", filters.statusFiltro);
-    const [{ data: m }, { data: p }, { data: l }] = await Promise.all([
-      metaQuery,
-      supabase.from("ads_performance").select("*").gte("data_ref", filters.dataInicio).lte("data_ref", filters.dataFim),
-      supabase.from("leads_ads_attribution").select("*").gte("created_at", filters.dataInicio + "T00:00:00").lte("created_at", filters.dataFim + "T23:59:59"),
-    ]);
-    setMetadata((m || []) as AdsMetadata[]);
-    setPerformance((p || []) as AdsPerformance[]);
-    setLeads((l || []) as LeadAdsAttribution[]);
-    setLoading(false);
-  }
+  const metadata = tData?.metadata || [];
+  const performance = tData?.performance || [];
+  const leads = tData?.leads || [];
 
   if (loading) return <div className="flex items-center justify-center h-64"><p className="text-muted-foreground">Carregando...</p></div>;
 
@@ -43,22 +26,38 @@ export default function TrafegoConjuntosPage() {
     const spend = perfs.reduce((s, p) => s + Number(p.spend), 0);
     const impressoes = perfs.reduce((s, p) => s + p.impressoes, 0);
     const cliques = perfs.reduce((s, p) => s + p.cliques, 0);
-    const leadsCount = lds.length;
+    const crmLeads = lds.length;
+    const leadsCount = perfs.reduce((s, p) => s + p.leads, 0);
     const qualificados = lds.filter((l) => !["novo", "oportunidade"].includes(l.estagio_crm)).length;
     const fechados = lds.filter((l) => l.estagio_crm === "fechado" || l.estagio_crm === "comprou").length;
     const cpl = leadsCount > 0 ? spend / leadsCount : 0;
     const ctr = impressoes > 0 ? (cliques / impressoes) * 100 : 0;
-    const taxaQualif = leadsCount > 0 ? (qualificados / leadsCount) * 100 : 0;
+    const taxaQualif = crmLeads > 0 ? (qualificados / crmLeads) * 100 : 0;
     const cpa = fechados > 0 ? spend / fechados : 0;
     return { id: asid, nome: ads[0]?.adset_name || asid, campanha: ads[0]?.campaign_name || "—", spend, leadsCount, cpl, ctr, taxaQualif, cpa };
-  }).sort((a, b) => b.spend - a.spend);
+  }).filter((as) => !filters.somenteComDados || as.spend > 0).sort((a, b) => b.spend - a.spend);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4">
         <h1 className="text-2xl font-bold">Conjuntos de Anúncios ({adsetData.length})</h1>
-        <TrafegoFilters periodo={filters.periodo} onPeriodoChange={filters.setPeriodo} dataInicio={filters.dataInicio} dataFim={filters.dataFim} onDataInicioChange={filters.setDataInicio} onDataFimChange={filters.setDataFim} statusFiltro={filters.statusFiltro} onStatusChange={filters.setStatusFiltro} />
+        <TrafegoFilters periodo={filters.periodo} onPeriodoChange={filters.setPeriodo} dataInicio={filters.dataInicio} dataFim={filters.dataFim} onDataInicioChange={filters.setDataInicio} onDataFimChange={filters.setDataFim} statusFiltro={filters.statusFiltro} onStatusChange={filters.setStatusFiltro} somenteComDados={filters.somenteComDados} onSomenteComDadosChange={filters.setSomenteComDados} />
       </div>
+      {/* KPI summary — usa performance total, não apenas conjuntos agrupados */}
+      {(() => {
+        const totalInvest = performance.reduce((s, p) => s + Number(p.spend), 0);
+        const totalLeads = performance.reduce((s, p) => s + p.leads, 0);
+        const cplPond = totalLeads > 0 ? totalInvest / totalLeads : 0;
+        const ativos = adsetData.filter((a) => a.spend > 0).length;
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground mb-1">Total Investido</p><p className="text-xl font-bold">{formatCurrency(totalInvest)}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground mb-1">CPL Médio Ponderado</p><p className="text-xl font-bold">{cplPond > 0 ? formatCurrency(cplPond) : "—"}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground mb-1">Conjuntos Ativos</p><p className="text-xl font-bold">{ativos}</p></CardContent></Card>
+          </div>
+        );
+      })()}
+
       {adsetData.length === 0 ? (
         <Card><CardContent className="py-12 text-center text-muted-foreground">Nenhum conjunto com os filtros selecionados</CardContent></Card>
       ) : (

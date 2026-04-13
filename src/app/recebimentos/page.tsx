@@ -1,195 +1,190 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
-import type { Recebimento } from "@/types/database";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect, useState, useMemo } from "react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { MonthSelector } from "@/components/month-selector";
-import { KpiCard } from "@/components/kpi-card";
-import { formatCurrency, getCurrentMonth } from "@/lib/format";
+import { formatCurrency } from "@/lib/format";
 import { toast } from "sonner";
-import { Plus, Check } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { EntradasResumoCards } from "@/components/financeiro/EntradasResumoCards";
+import { EntradasTabela } from "@/components/financeiro/EntradasTabela";
+import { NovoClienteModal } from "@/components/financeiro/NovoClienteModal";
+import { MarcarPagoModal } from "@/components/financeiro/MarcarPagoModal";
+import { Plus, Download, AlertTriangle, Clock, ChevronDown, ChevronRight, CheckCircle, Flame } from "lucide-react";
+import { useEntradasSWR } from "@/hooks/use-financeiro-swr";
+import { motion, AnimatePresence } from "framer-motion";
 
-export default function RecebimentosPage() {
-  const [mes, setMes] = useState(getCurrentMonth);
-  const [recebimentos, setRecebimentos] = useState<Recebimento[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [receberModal, setReceberModal] = useState<string | null>(null);
-  const [dataRecebida, setDataRecebida] = useState(() => new Date().toISOString().split("T")[0]);
-  const [form, setForm] = useState({ cliente_nome: "", data_prevista: new Date().toISOString().split("T")[0], valor: 0, tipo: "entrada" as string, obs: "" });
+const MESES_SHORT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    const { data } = await supabase.from("recebimentos").select("*").eq("mes_referencia", mes).order("data_prevista");
-    const hoje = new Date();
-    const items = (data || []).map((r: Recebimento) => {
-      if (r.status === "pendente" && !r.data_recebida) {
-        const prev = new Date(r.data_prevista + "T12:00:00");
-        const diff = Math.floor((hoje.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24));
-        if (diff > 3) return { ...r, status: "atrasado" as const };
-      }
-      return r;
-    });
-    setRecebimentos(items);
-    setLoading(false);
-  }, [mes]);
-
-  useEffect(() => { loadData(); }, [loadData]);
-
-  const totalPrevisto = recebimentos.reduce((s, r) => s + Number(r.valor), 0);
-  const totalRecebido = recebimentos.filter((r) => r.status === "recebido").reduce((s, r) => s + Number(r.valor), 0);
-  const totalPendente = recebimentos.filter((r) => r.status === "pendente").reduce((s, r) => s + Number(r.valor), 0);
-  const totalAtrasado = recebimentos.filter((r) => r.status === "atrasado").reduce((s, r) => s + Number(r.valor), 0);
-
-  // Group by week
-  const weeks: { label: string; start: number; end: number; items: Recebimento[]; total: number }[] = [];
-  const [year, month] = mes.split("-").map(Number);
-  for (let w = 0; w < 5; w++) {
-    const start = w * 7 + 1;
-    const end = Math.min((w + 1) * 7, new Date(year, month, 0).getDate());
-    if (start > new Date(year, month, 0).getDate()) break;
-    const items = recebimentos.filter((r) => {
-      const day = new Date(r.data_prevista + "T12:00:00").getDate();
-      return day >= start && day <= end;
-    });
-    weeks.push({
-      label: `Semana ${w + 1} (${String(start).padStart(2, "0")}/${String(month).padStart(2, "0")} - ${String(end).padStart(2, "0")}/${String(month).padStart(2, "0")})`,
-      start, end, items,
-      total: items.reduce((s, r) => s + Number(r.valor), 0),
-    });
+function buildMesesOptions(ano: number) {
+  const labels: Record<string, string> = {};
+  const options = ["tudo"];
+  for (let i = 1; i <= 12; i++) {
+    const key = `${ano}-${String(i).padStart(2, "0")}`;
+    labels[key] = MESES_SHORT[i - 1];
+    options.push(key);
   }
+  return { labels, options };
+}
 
-  const chartData = weeks.map((w) => ({
-    semana: `S${weeks.indexOf(w) + 1}`,
-    previsto: w.items.reduce((s, r) => s + Number(r.valor), 0),
-    recebido: w.items.filter((r) => r.status === "recebido").reduce((s, r) => s + Number(r.valor), 0),
-  }));
+export default function EntradasPage() {
+  const [mounted, setMounted] = useState(false);
+  const [ano, setAno] = useState(() => new Date().getFullYear());
+  const [mes, setMes] = useState(() => new Date().toISOString().slice(0, 7));
+  const [showNovo, setShowNovo] = useState(false);
+  const [pagoInline, setPagoInline] = useState<any | null>(null);
+  const [alertasAberto, setAlertasAberto] = useState(true);
 
-  async function marcarRecebido() {
-    if (!receberModal) return;
-    await supabase.from("recebimentos").update({ status: "recebido", data_recebida: dataRecebida }).eq("id", receberModal);
-    toast.success("Recebimento confirmado!");
-    setReceberModal(null);
-    loadData();
-  }
+  // Setup options once per year
+  const { labels: MESES_LABELS, options: MESES_OPTIONS } = useMemo(() => buildMesesOptions(ano), [ano]);
 
-  async function salvarNovo() {
-    if (!form.cliente_nome.trim() || form.valor <= 0) { toast.error("Preencha todos os campos"); return; }
-    await supabase.from("recebimentos").insert({ ...form, mes_referencia: mes, status: "pendente", obs: form.obs || null });
-    toast.success("Recebimento registrado!");
-    setModalOpen(false);
-    setForm({ cliente_nome: "", data_prevista: new Date().toISOString().split("T")[0], valor: 0, tipo: "entrada", obs: "" });
-    loadData();
-  }
+  useEffect(() => { setMounted(true); }, []);
 
-  const statusBadge = (s: string) => {
-    if (s === "recebido") return <Badge className="bg-green-500/20 text-green-500 border-green-500/30">Recebido</Badge>;
-    if (s === "atrasado") return <Badge className="bg-red-500/20 text-red-500 border-red-500/30">Atrasado</Badge>;
-    return <Badge className="bg-yellow-500/20 text-yellow-500 border-yellow-500/30">Pendente</Badge>;
+  const { clientes, resumo, isLoading, mutate } = useEntradasSWR(mes);
+
+  // Process Warnings Only Once using useMemo
+  const { inadimplentes, renovacao } = useMemo(() => {
+    if (!clientes) return { inadimplentes: [], renovacao: [] };
+    const hoje = new Date().getTime();
+
+    const inap = clientes.filter((c: any) => c.pagamento_mes?.status === "atrasado" && c.status === "ativo");
+    const ren = clientes.filter((c: any) => {
+      const sf = c.status_financeiro || c.status;
+      if (sf === "churned") return false;
+      if (!c.fidelidade_fim) return false;
+      const fim = new Date(c.fidelidade_fim).getTime();
+      const dias = Math.ceil((fim - hoje) / (1000 * 60 * 60 * 24));
+      return dias <= 30;
+    }).sort((a: any, b: any) => new Date(a.fidelidade_fim).getTime() - new Date(b.fidelidade_fim).getTime());
+
+    return { inadimplentes: inap, renovacao: ren };
+  }, [clientes]);
+
+  const totalAlertas = inadimplentes.length + renovacao.length;
+
+  const exportarCsv = () => {
+    const header = "Cliente,Plataforma,Valor,Closer,Contrato,Status,Pagamento";
+    const rows = clientes.map((c: any) => {
+      const pagStatus = c.pagamento_mes?.status || "—";
+      const pagValor = c.pagamento_mes?.valor_pago ? formatCurrency(Number(c.pagamento_mes.valor_pago)) : "—";
+      return `"${c.nome}",${c.plataforma},${c.valor_mensal},${c.closer},${c.tipo_contrato},${c.status},${pagStatus} ${pagValor}`;
+    });
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `entradas-${mes}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("CSV exportado com sucesso.");
   };
 
-  if (loading) return <div className="flex items-center justify-center h-64"><p className="text-muted-foreground">Carregando...</p></div>;
+  if (!mounted || isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 animate-in fade-in text-muted-foreground">
+        <div className="w-8 h-8 rounded-full border-4 border-emerald-500/30 border-t-emerald-500 animate-spin mb-3" />
+        <p className="text-xs uppercase tracking-widest font-bold">Apurando Entradas...</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold">Recebimentos</h1>
+    <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-700 fade-in">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between bg-card/60 border border-border/50 p-6 rounded-2xl backdrop-blur-xl shadow-[0_4px_24px_-10px_rgba(0,0,0,0.1)] gap-6">
+        <div>
+          <h1 className="text-3xl font-black tracking-tighter flex items-center gap-2">Recebimentos CRM <CheckCircle size={24} className="text-emerald-500" /></h1>
+          <p className="text-muted-foreground font-medium text-sm mt-1 max-w-[500px]">Fluxo principal dos caixas da agência baseando-se por renovações.</p>
+        </div>
         <div className="flex items-center gap-3">
-          <MonthSelector value={mes} onChange={setMes} />
-          <Button onClick={() => setModalOpen(true)}><Plus size={16} className="mr-1" />Registrar</Button>
+          <div className="flex items-center gap-2 bg-muted/20 border border-border/40 p-1 rounded-xl">
+            <button onClick={() => { setAno(ano - 1); setMes("tudo"); }} className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground">←</button>
+            <span className="text-sm font-black tracking-wider w-12 text-center font-mono">{ano}</span>
+            <button onClick={() => { setAno(ano + 1); setMes("tudo"); }} className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground">→</button>
+          </div>
+          <div className="flex bg-muted/20 border border-border/40 rounded-xl p-1 shadow-inner">
+            {MESES_OPTIONS.map((m) => (
+              <button key={m} onClick={() => setMes(m)}
+                className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${mes === m ? "bg-emerald-500 text-white shadow" : "text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}>
+                {m === "tudo" ? "Tudo" : (MESES_LABELS[m] || m)}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => setShowNovo(true)} className="bg-emerald-500 hover:bg-emerald-600 font-bold uppercase tracking-widest text-[10px]"><Plus size={14} className="mr-1" /> Cliente</Button>
+            <Button size="sm" variant="outline" onClick={exportarCsv} className="border-border/40 shadow-sm font-bold uppercase tracking-widest text-[10px]"><Download size={14} className="mr-1" /> CSV</Button>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard title="Total Previsto" value={formatCurrency(totalPrevisto)} />
-        <KpiCard title="Recebido" value={formatCurrency(totalRecebido)} />
-        <KpiCard title="Pendente" value={formatCurrency(totalPendente)} />
-        <KpiCard title="Atrasado" value={formatCurrency(totalAtrasado)} />
+      <EntradasResumoCards resumo={resumo} loading={isLoading} />
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="lg:col-span-3">
+          <EntradasTabela clientes={clientes} mesReferencia={`${mes}-01`} onRefresh={mutate} />
+        </div>
+
+        {/* Alertas Column */}
+        <div className="lg:col-span-1 space-y-4">
+          {totalAlertas > 0 ? (
+            <Card className="shadow-sm border border-border/40">
+              <CardContent className="pt-4 pb-4">
+                <button onClick={() => setAlertasAberto(!alertasAberto)} className="w-full flex items-center justify-between py-1 text-xs font-black uppercase tracking-widest text-destructive hover:opacity-80 transition-opacity">
+                  <span className="flex items-center gap-2"><AlertTriangle size={16} /> Quarentena ({totalAlertas})</span>
+                  {alertasAberto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
+                <AnimatePresence>
+                  {alertasAberto && (
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="pt-4 space-y-4 overflow-hidden">
+                      {inadimplentes.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-red-500">{inadimplentes.length} Pendências Ativas</p>
+                          {inadimplentes.map((c: any) => (
+                            <div key={c.id} className="flex flex-col gap-2 p-3 border rounded-xl border-red-500/30 bg-red-500/10">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-red-100">{c.nome}</span>
+                                <span className="text-xs text-red-400 font-mono font-black">{formatCurrency(c.valor_mensal)}</span>
+                              </div>
+                              <Button size="sm" className="w-full h-6 text-[10px] uppercase font-black tracking-widest bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all shadow-none" onClick={() => setPagoInline(c)}>Quitar Débito</Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {renovacao.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-yellow-500">{renovacao.length} Fidelidades Expirando</p>
+                          {renovacao.map((c: any) => {
+                            const dias = Math.ceil((new Date(c.fidelidade_fim).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+                            return (
+                              <div key={c.id} className={`flex flex-col gap-2 p-3 border rounded-xl ${dias <= 0 ? "border-red-500/30 bg-red-500/10" : "border-yellow-500/30 bg-yellow-500/10"}`}>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-bold text-slate-200">{c.nome}</span>
+                                  <span className="text-xs text-muted-foreground font-mono">{formatCurrency(c.valor_mensal)}</span>
+                                </div>
+                                <Badge variant="outline" className={`justify-center font-mono text-[9px] uppercase tracking-widest ${dias <= 0 ? "text-red-400 border-red-500/40" : "text-yellow-400 border-yellow-500/40"}`}>
+                                  {dias <= 0 ? "Expirou Agora" : `${dias} Dias Faltando`}
+                                </Badge>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="h-32 rounded-2xl border border-dashed border-border/50 flex flex-col items-center justify-center text-muted-foreground bg-green-500/5">
+              <Flame size={24} className="opacity-50 text-emerald-500 mb-2" />
+              <p className="text-[10px] uppercase font-black tracking-widest">Nenhuma Ameaça Encontrada</p>
+            </div>
+          )}
+        </div>
       </div>
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">Previsto vs Recebido por Semana</CardTitle></CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-              <XAxis dataKey="semana" />
-              <YAxis />
-              <Tooltip formatter={(v) => formatCurrency(Number(v))} />
-              <Legend />
-              <Bar dataKey="previsto" fill="#f59e0b" name="Previsto" />
-              <Bar dataKey="recebido" fill="#22c55e" name="Recebido" />
-            </BarChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      {weeks.map((w) => (
-        <Card key={w.label}>
-          <CardHeader><CardTitle className="text-sm">{w.label} — {formatCurrency(w.total)}</CardTitle></CardHeader>
-          {w.items.length > 0 && (
-            <CardContent>
-              <div className="space-y-2">
-                {w.items.map((r) => (
-                  <div key={r.id} className="flex items-center justify-between p-3 border rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm text-muted-foreground">{new Date(r.data_prevista + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}</span>
-                      <span className="font-medium">{r.cliente_nome}</span>
-                      <span className="font-bold">{formatCurrency(Number(r.valor))}</span>
-                      {statusBadge(r.status)}
-                    </div>
-                    {r.status !== "recebido" && (
-                      <Button size="sm" variant="outline" onClick={() => { setReceberModal(r.id); setDataRecebida(new Date().toISOString().split("T")[0]); }}>
-                        <Check size={14} className="mr-1" />Recebido
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          )}
-        </Card>
-      ))}
-
-      {/* Modal confirmar recebimento */}
-      <Dialog open={!!receberModal} onOpenChange={() => setReceberModal(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Confirmar Recebimento</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1"><Label>Data recebida</Label><Input type="date" value={dataRecebida} onChange={(e) => setDataRecebida(e.target.value)} /></div>
-            <div className="flex gap-3"><Button onClick={marcarRecebido} className="flex-1">Confirmar</Button><Button variant="outline" onClick={() => setReceberModal(null)} className="flex-1">Cancelar</Button></div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Modal novo recebimento */}
-      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Novo Recebimento</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1"><Label>Cliente</Label><Input value={form.cliente_nome} onChange={(e) => setForm({ ...form, cliente_nome: e.target.value })} /></div>
-            <div className="space-y-1"><Label>Data prevista</Label><Input type="date" value={form.data_prevista} onChange={(e) => setForm({ ...form, data_prevista: e.target.value })} /></div>
-            <div className="space-y-1"><Label>Valor (R$)</Label><Input type="number" min={0} step={0.01} value={form.valor} onChange={(e) => setForm({ ...form, valor: Number(e.target.value) })} /></div>
-            <div className="space-y-1">
-              <Label>Tipo</Label>
-              <Select value={form.tipo} onValueChange={(v) => setForm({ ...form, tipo: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="entrada">Entrada</SelectItem><SelectItem value="mensalidade">Mensalidade</SelectItem><SelectItem value="parcela">Parcela</SelectItem></SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1"><Label>OBS</Label><Input value={form.obs} onChange={(e) => setForm({ ...form, obs: e.target.value })} /></div>
-            <div className="flex gap-3"><Button onClick={salvarNovo} className="flex-1">Salvar</Button><Button variant="outline" onClick={() => setModalOpen(false)} className="flex-1">Cancelar</Button></div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {showNovo && <NovoClienteModal onSaved={() => { setShowNovo(false); mutate(); }} onClose={() => setShowNovo(false)} />}
+      {pagoInline && <MarcarPagoModal clienteId={pagoInline.id} clienteNome={pagoInline.nome} valorMensal={pagoInline.valor_mensal} mesReferencia={`${mes}-01`} onSaved={() => { setPagoInline(null); mutate(); }} onClose={() => setPagoInline(null)} />}
     </div>
   );
 }

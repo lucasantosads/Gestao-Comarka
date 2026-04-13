@@ -10,7 +10,7 @@ interface TabsContextValue {
 
 const TabsContext = React.createContext<TabsContextValue>({
   value: "",
-  onValueChange: () => {},
+  onValueChange: () => { },
 })
 
 function Tabs({
@@ -39,7 +39,7 @@ function Tabs({
 
 function TabsList({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
-    <div className={cn("inline-flex h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground", className)}>
+    <div className={cn("inline-flex h-10 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground border border-border dark:bg-white/[0.04] dark:backdrop-blur-sm dark:border-white/[0.06]", className)}>
       {children}
     </div>
   )

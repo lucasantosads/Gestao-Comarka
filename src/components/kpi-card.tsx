@@ -8,22 +8,48 @@ interface KpiCardProps {
   previousValue?: string;
   trend?: "up" | "down" | "neutral";
   className?: string;
+  size?: "primary" | "secondary";
 }
 
-export function KpiCard({ title, value, previousValue, trend, className }: KpiCardProps) {
+export function KpiCard({ title, value, previousValue, trend, className, size = "primary" }: KpiCardProps) {
+  const isPrimary = size === "primary";
+
+  const trendColor =
+    trend === "up" ? "text-emerald-500 dark:text-emerald-400" :
+      trend === "down" ? "text-red-500 dark:text-red-400" :
+        "text-muted-foreground/50";
+
+  const trendBg =
+    trend === "up" ? "bg-emerald-500/10 dark:bg-emerald-500/10" :
+      trend === "down" ? "bg-red-500/10 dark:bg-red-500/10" :
+        "bg-muted/50";
+
   return (
-    <Card className={cn("", className)}>
-      <CardContent className="p-4">
-        <p className="text-xs text-muted-foreground mb-1">{title}</p>
-        <p className="text-xl font-bold">{value}</p>
+    <Card className={cn(
+      "overflow-hidden",
+      isPrimary ? "" : "dark:bg-white/[0.02] bg-muted/30",
+      className
+    )}>
+      {/* Gradient top accent line */}
+      <div className="h-[2px] w-full gradient-primary opacity-40 group-hover/card:opacity-80 transition-opacity duration-300" />
+      <CardContent className={cn(isPrimary ? "p-5" : "p-4")}>
+        <p className={cn(
+          "mb-2.5 uppercase tracking-[0.15em] font-medium",
+          isPrimary ? "text-[10px] text-muted-foreground/70" : "text-[9px] text-muted-foreground/60"
+        )}>
+          {title}
+        </p>
+        <p className={cn("font-bold tracking-tight", isPrimary ? "text-3xl" : "text-xl")}>
+          {value}
+        </p>
         {previousValue !== undefined && (
-          <div className="flex items-center gap-1 mt-1">
-            {trend === "up" && <TrendingUp size={14} className="text-green-500" />}
-            {trend === "down" && <TrendingDown size={14} className="text-red-500" />}
-            {trend === "neutral" && <Minus size={14} className="text-muted-foreground" />}
-            <span className="text-xs text-muted-foreground">
-              Anterior: {previousValue}
-            </span>
+          <div className="flex items-center gap-2 mt-3">
+            <div className={cn("flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium", trendBg, trendColor)}>
+              {trend === "up" && <TrendingUp size={11} />}
+              {trend === "down" && <TrendingDown size={11} />}
+              {trend === "neutral" && <Minus size={11} />}
+              <span>Ant: {previousValue}</span>
+            </div>
           </div>
         )}
       </CardContent>

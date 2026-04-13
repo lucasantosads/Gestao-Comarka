@@ -25,30 +25,28 @@ function mapEstagio(e: string): string {
   return "qualificado";
 }
 
+import { useTrafegoData } from "@/hooks/use-trafego-data";
+import useSWR from "swr";
+
 export default function FunilClientePage() {
   const filters = useTrafegoFilters();
-  const [metadata, setMetadata] = useState<AdsMetadata[]>([]);
-  const [performance, setPerformance] = useState<AdsPerformance[]>([]);
-  const [leads, setLeads] = useState<LeadAdsAttribution[]>([]);
-  const [stageHistory, setStageHistory] = useState<{ lead_id: string; estagio_anterior: string | null; estagio_novo: string; alterado_em: string }[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data, isLoading: loadingTrafego } = useTrafegoData(filters.dataInicio, filters.dataFim, filters.statusFiltro);
 
-  useEffect(() => { loadData(); }, [filters.dataInicio, filters.dataFim]);
+  const metadata = data?.metadata || [];
+  const performance = data?.performance || [];
+  const leads = data?.leads || [];
 
-  async function loadData() {
-    setLoading(true);
-    const [{ data: m }, { data: p }, { data: l }, { data: h }] = await Promise.all([
-      supabase.from("ads_metadata").select("*"),
-      supabase.from("ads_performance").select("*").gte("data_ref", filters.dataInicio).lte("data_ref", filters.dataFim),
-      supabase.from("leads_ads_attribution").select("*").gte("created_at", filters.dataInicio + "T00:00:00").lte("created_at", filters.dataFim + "T23:59:59"),
-      supabase.from("leads_stages_history").select("*"),
-    ]);
-    setMetadata((m || []) as AdsMetadata[]);
-    setPerformance((p || []) as AdsPerformance[]);
-    setLeads((l || []) as LeadAdsAttribution[]);
-    setStageHistory((h || []) as typeof stageHistory);
-    setLoading(false);
-  }
+  const { data: hData, isLoading: loadingHistory } = useSWR(
+    ["stage-history", filters.dataInicio, filters.dataFim],
+    async () => {
+      const { data } = await supabase.from("leads_stages_history").select("lead_id,estagio_anterior,estagio_novo,alterado_em").gte("alterado_em", filters.dataInicio + "T00:00:00").lte("alterado_em", filters.dataFim + "T23:59:59").limit(5000);
+      return data || [];
+    },
+    { revalidateOnFocus: false, dedupingInterval: 30000 }
+  );
+
+  const stageHistory = hData || [];
+  const loading = loadingTrafego || loadingHistory;
 
   if (loading) return <div className="flex items-center justify-center h-64"><p className="text-muted-foreground">Carregando...</p></div>;
 

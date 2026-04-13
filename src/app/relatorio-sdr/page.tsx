@@ -80,7 +80,7 @@ export default function RelatorioSdrPage() {
     const [{ data: l }, { data: m }, { data: crm }] = await Promise.all([
       supabase.from("lancamentos_sdr").select("*").eq("sdr_id", sdrId).eq("mes_referencia", mes).order("data"),
       supabase.from("metas_sdr").select("*").eq("sdr_id", sdrId).eq("mes_referencia", mes).single(),
-      supabase.from("leads_crm").select("*").eq("mes_referencia", mes).order("created_at"),
+      supabase.from("leads_crm").select("*").eq("mes_referencia", mes).order("ghl_created_at", { nullsFirst: false }),
     ]);
     setLancamentos((l || []) as LancamentoSdr[]);
     setMeta((m as MetaSdr) || null);

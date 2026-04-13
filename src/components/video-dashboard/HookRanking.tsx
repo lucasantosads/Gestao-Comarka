@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useDateFilter } from "@/contexts/DateFilterContext";
+import { supabase } from "@/lib/supabase";
+import { formatCurrency } from "@/lib/format";
 import type { CreativeWithMetrics } from "@/lib/types/metaVideo";
 
 const HOOK_TYPES: Record<string, string[]> = {
@@ -23,6 +25,7 @@ function detectHookType(name: string): string {
 export function HookRanking() {
   const { queryString } = useDateFilter();
   const [ads, setAds] = useState<CreativeWithMetrics[]>([]);
+  const [leadsByAd, setLeadsByAd] = useState<Record<string, { leads: number; cpl: number }>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -31,6 +34,22 @@ export function HookRanking() {
       setAds((d.data || []).sort((a: CreativeWithMetrics, b: CreativeWithMetrics) => b.metrics.hookRate - a.metrics.hookRate));
       setLoading(false);
     }).catch(() => setLoading(false));
+    // Enriquece com leads/CPL por ad_id (últimos 90 dias)
+    const since = new Date(Date.now() - 90 * 86400000).toISOString().split("T")[0];
+    supabase.from("ads_performance").select("ad_id,spend,leads").gte("data_ref", since).limit(5000)
+      .then(({ data }) => {
+        const agg: Record<string, { spend: number; leads: number }> = {};
+        (data || []).forEach((p: { ad_id: string; spend: number | string; leads: number }) => {
+          const e = agg[p.ad_id] || { spend: 0, leads: 0 };
+          e.spend += Number(p.spend); e.leads += p.leads;
+          agg[p.ad_id] = e;
+        });
+        const out: Record<string, { leads: number; cpl: number }> = {};
+        for (const [id, v] of Object.entries(agg)) {
+          out[id] = { leads: v.leads, cpl: v.leads > 0 ? v.spend / v.leads : 0 };
+        }
+        setLeadsByAd(out);
+      });
   }, [queryString]);
 
   if (loading) return <Card><CardContent className="py-8"><div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-8 bg-muted animate-pulse rounded" />)}</div></CardContent></Card>;
@@ -58,6 +77,14 @@ export function HookRanking() {
               <span className={`text-xs font-bold shrink-0 ${ad.metrics.hookRate >= 30 ? "text-green-400" : ad.metrics.hookRate >= 15 ? "text-yellow-400" : "text-red-400"}`}>
                 {ad.metrics.hookRate.toFixed(1)}%
               </span>
+              <div className="text-right shrink-0 w-12">
+                <p className="text-[9px] text-muted-foreground leading-none">Leads</p>
+                <p className="text-[11px] font-semibold">{leadsByAd[ad.id]?.leads ?? "—"}</p>
+              </div>
+              <div className="text-right shrink-0 w-14">
+                <p className="text-[9px] text-muted-foreground leading-none">CPL</p>
+                <p className="text-[11px] font-semibold">{leadsByAd[ad.id]?.cpl ? formatCurrency(leadsByAd[ad.id].cpl) : "—"}</p>
+              </div>
               <Badge variant="outline" className="text-[9px] shrink-0">{hookType}</Badge>
             </div>
           );

@@ -76,7 +76,7 @@ export function BonusCard({ data }: { data: BonusData }) {
           <span>TOTAL ESTIMADO</span><span className="text-green-500">{formatCurrency(b.total)}</span>
         </div>
         <div className="flex justify-between text-xs text-muted-foreground">
-          <span>Projecao fim do mes</span><span>{formatCurrency(b.projecao)}</span>
+          <span>Projeção fim do mês</span><span>{formatCurrency(b.projecao)}</span>
         </div>
       </CardContent>
     </Card>

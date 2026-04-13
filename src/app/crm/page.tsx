@@ -1,364 +1,288 @@
 "use client";
 
-import { Fragment, useEffect, useState, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
-import type { LeadCrm, Closer, Sdr } from "@/types/database";
+import { useState, useMemo, useEffect } from "react";
 import { formatCurrency, getCurrentMonth } from "@/lib/format";
-import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Plus, ArrowUpDown, Search, Trash2 } from "lucide-react";
+import { SyncButton } from "@/components/sync-button";
+import { useCrmData } from "@/hooks/use-crm-data";
+import { useDebounce } from "@/hooks/use-debounce";
+import { CrmFilters } from "./components/crm-filters";
+import { CrmTable, ALL_COLUMNS, CANAIS, leadScore } from "./components/crm-table";
 
 const ETAPAS = [
-  { key: "oportunidade", label: "Oportunidade", color: "#94a3b8" },
-  { key: "reuniao_agendada", label: "Reunião Agendada", color: "#6366f1" },
-  { key: "proposta_enviada", label: "Proposta Enviada", color: "#8b5cf6" },
-  { key: "follow_up", label: "Follow Up", color: "#a78a45" },
-  { key: "assinatura_contrato", label: "Assinatura", color: "#6b7280" },
-  { key: "comprou", label: "Comprou", color: "#22c55e" },
-  { key: "desistiu", label: "Desistiu", color: "#ef4444" },
+  { key: "oportunidade", label: "Oportunidade" },
+  { key: "reuniao_agendada", label: "Reunião Agendada" },
+  { key: "proposta_enviada", label: "Proposta Enviada" },
+  { key: "follow_up", label: "Follow Up" },
+  { key: "assinatura_contrato", label: "Assinatura" },
+  { key: "comprou", label: "Comprou" },
+  { key: "desistiu", label: "Desistiu" },
+  { key: "frio", label: "Frio" },
 ] as const;
 
-const MOTIVOS = ["Clausulas do contrato", "Segmento que nao atendemos", "Nao temos o servico", "Tirar duvidas apenas", "Falta de retorno do lead", "Ira reavaliar em outra oportunidade", "Nao possui investimento necessario", "Optou por concorrente", "Nao entramos em contato", "Mudou o projeto", "Outro"];
-const CANAIS = ["Trafego Pago", "Organico", "Social Selling", "Indicacao", "Workshop"];
-const FUNIL_OPTIONS = ["Sessao Estrategica", "Social Selling", "Webinar", "Aplicacao", "Evento", "Indicacao", "Isca", "Formulario", "Trafego pago"];
-const ORIGEM_OPTIONS = ["facebookads", "instagram", "googleads", "whatsapp", "email", "organic", "Lista", "Prospec. Ativa"];
-const ABAS = [{ label: "Todos", etapa: null }, ...ETAPAS.map((e) => ({ label: e.label, etapa: e.key }))];
-const etapaCfg = (etapa: string) => ETAPAS.find((e) => e.key === etapa) || ETAPAS[0];
+const DIAS_INATIVO_LIMITE = 30;
+const ABAS = [{ label: "Todos", etapa: null }, ...ETAPAS.map(e => ({ label: e.label, etapa: e.key }))];
+
+function tempoNaEtapa(lead: any): { label: string; days: number; color: string } {
+  const ref = lead.updated_at || lead.created_at || lead.preenchido_em;
+  if (!ref) return { label: "—", days: 0, color: "" };
+  const days = Math.floor((Date.now() - new Date(ref).getTime()) / 86400000);
+  if (days >= 30) return { label: `${Math.floor(days / 30)} mês${days >= 60 ? "es" : ""}`, days, color: "text-red-400" };
+  if (days >= 14) return { label: `${Math.floor(days / 7)} sem.`, days, color: "text-red-400" };
+  if (days >= 7) return { label: `${days} dias`, days, color: "text-yellow-400" };
+  return { label: days === 0 ? "hoje" : `${days} dia${days > 1 ? "s" : ""}`, days, color: "text-muted-foreground" };
+}
 
 export default function CrmPage() {
   const [mes, setMes] = useState(getCurrentMonth());
-  const [leads, setLeads] = useState<LeadCrm[]>([]);
-  const [closers, setClosers] = useState<Closer[]>([]);
-  const [sdrs, setSdrs] = useState<Sdr[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { leads, closers, sdrs, loading, mutate, updateLead, mudarEtapa, addNovoLead, deleteLead } = useCrmData();
+
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
-  const [sortCol, setSortCol] = useState("created_at");
+  const debouncedBusca = useDebounce(busca, 600); // 600ms debounce map on CPU
+
+  const [closerFiltro, setCloserFiltro] = useState<string>(() => {
+    if (typeof window !== "undefined") return sessionStorage.getItem("crm_closer_filter") || "todos";
+    return "todos";
+  });
+  const [sortCol, setSortCol] = useState("_tempo");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const [editingCell, setEditingCell] = useState<{ rowId: string; col: string } | null>(null);
-  const [tempValue, setTempValue] = useState("");
-  const [expandedRow, setExpandedRow] = useState<string | null>(null);
-  const [openDropdown, setOpenDropdown] = useState<{ rowId: string; col: string } | null>(null);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    const [{ data: l }, { data: c }, { data: s }] = await Promise.all([
-      supabase.from("leads_crm").select("*").order("created_at", { ascending: false }),
-      supabase.from("closers").select("*").eq("ativo", true).order("nome"),
-      supabase.from("sdrs").select("*").eq("ativo", true).order("nome"),
-    ]);
-    setLeads((l || []) as LeadCrm[]);
-    setClosers((c || []) as Closer[]);
-    setSdrs((s || []) as Sdr[]);
-    setLoading(false);
-  }, []);
+  const [visibleCount, setVisibleCount] = useState(15);
+  const [showColDropdown, setShowColDropdown] = useState(false);
+  const [showAdvFilters, setShowAdvFilters] = useState(false);
+  const [filtroCanal, setFiltroCanal] = useState("todos");
+  const [filtroScoreRange, setFiltroScoreRange] = useState<string | null>(null);
+  const [lastSync, setLastSync] = useState<Date | null>(null);
 
-  useEffect(() => { loadData(); }, [loadData]);
-
-  useEffect(() => {
-    const ch = supabase.channel("leads_crm_rt2").on("postgres_changes", { event: "*", schema: "public", table: "leads_crm" }, (p) => {
-      if (p.eventType === "UPDATE") setLeads((prev) => prev.map((l) => (l.id === (p.new as LeadCrm).id ? { ...l, ...(p.new as LeadCrm) } : l)));
-      if (p.eventType === "INSERT") setLeads((prev) => [p.new as LeadCrm, ...prev]);
-    }).subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, []);
-
-  useEffect(() => {
-    const h = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.closest("[data-dropdown-menu]") || target.closest("[data-dropdown-trigger]")) return;
-      setOpenDropdown(null);
-    };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, []);
-
-  const closerName = (id: string | null) => closers.find((c) => c.id === id)?.nome || "—";
-  const sdrName = (id: string | null) => sdrs.find((s) => s.id === id)?.nome || "—";
-  const getField = (lead: LeadCrm, f: string) => (lead as unknown as Record<string, unknown>)[f];
-
-  const updateLead = async (id: string, campo: string, valor: unknown) => {
-    const old = leads.find((l) => l.id === id);
-    setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, [campo]: valor } : l)));
-    const { error } = await supabase.from("leads_crm").update({ [campo]: valor }).eq("id", id);
-    if (error && old) { setLeads((prev) => prev.map((l) => (l.id === id ? old : l))); toast.error("Erro ao salvar"); }
-  };
-
-  const mudarEtapa = async (id: string, novaEtapa: string) => {
-    const lead = leads.find((l) => l.id === id);
-    if (!lead) return;
-    const agora = new Date().toISOString();
-    const df: Record<string, string> = { reuniao_agendada: "data_reuniao_agendada", proposta_enviada: "data_proposta_enviada", follow_up: "data_follow_up", assinatura_contrato: "data_assinatura", comprou: "data_comprou", desistiu: "data_desistiu" };
-    const upd: Record<string, unknown> = { etapa: novaEtapa };
-    if (df[novaEtapa]) upd[df[novaEtapa]] = agora;
-    if (novaEtapa === "comprou") upd.data_venda = agora.split("T")[0];
-    setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, etapa: novaEtapa as LeadCrm["etapa"] } : l)));
-    await supabase.from("leads_crm").update(upd).eq("id", id);
-    await supabase.from("leads_crm_historico").insert({ lead_id: id, etapa_anterior: lead.etapa, etapa_nova: novaEtapa });
-
-    // Auto-criar contrato quando lead muda para "comprou"
-    if (novaEtapa === "comprou" && lead.etapa !== "comprou") {
-      const mesRef = lead.mes_referencia || getCurrentMonth();
-      const { data: contrato } = await supabase.from("contratos").insert({
-        mes_referencia: mesRef,
-        closer_id: lead.closer_id || null,
-        sdr_id: lead.sdr_id || null,
-        cliente_nome: lead.nome || "Sem nome",
-        origem_lead: lead.canal_aquisicao || lead.funil || "—",
-        valor_entrada: Number(lead.valor_entrada) || 0,
-        meses_contrato: Number(lead.fidelidade_meses) || 6,
-        mrr: Number(lead.mensalidade) || 0,
-        data_fechamento: agora.split("T")[0],
-        obs: "",
-      }).select("id").single();
-
-      // Vincular contrato ao lead
-      if (contrato?.id) {
-        await supabase.from("leads_crm").update({ contrato_id: contrato.id }).eq("id", id);
-        setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, contrato_id: contrato.id } : l)));
-        toast.success("Contrato criado automaticamente!");
-      }
+  const [visibleCols, setVisibleCols] = useState<Set<string>>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("crm_visible_cols");
+        if (saved) return new Set(JSON.parse(saved));
+      } catch { }
     }
-  };
-
-  const addNovoLead = async () => {
-    const mesRef = mes === "all" ? getCurrentMonth() : mes;
-    const { data, error } = await supabase.from("leads_crm").insert({
-      nome: "", etapa: (abaAtiva as string) || "oportunidade", mes_referencia: mesRef, ghl_contact_id: `manual-${Date.now()}`,
-    }).select().single();
-    if (error) { toast.error("Erro: " + error.message); return; }
-    if (data) { setLeads((prev) => [data as LeadCrm, ...prev]); setEditingCell({ rowId: data.id, col: "nome" }); setTempValue(""); }
-  };
-
-  const deleteLead = async (id: string) => {
-    if (!confirm("Excluir este lead?")) return;
-    setLeads((prev) => prev.filter((l) => l.id !== id));
-    await supabase.from("leads_crm").delete().eq("id", id);
-    toast.success("Lead excluido");
-  };
-
-  const handleSave = async () => {
-    if (!editingCell) return;
-    const numCols = ["valor_entrada", "mensalidade", "fidelidade_meses", "valor_total_projeto", "faturamento"];
-    const val = numCols.includes(editingCell.col) ? Number(tempValue) || 0 : tempValue || null;
-    await updateLead(editingCell.rowId, editingCell.col, val);
-    setEditingCell(null);
-  };
-
-  // Filter + Sort
-  let filtered = leads;
-  if (abaAtiva) filtered = filtered.filter((l) => l.etapa === abaAtiva);
-  // Filtro de mês só para "Comprou"
-  if (abaAtiva === "comprou" && mes !== "all") {
-    filtered = filtered.filter((l) => {
-      const dv = l.data_venda || l.mes_referencia;
-      return dv?.startsWith(mes);
-    });
-  }
-  if (busca) { const q = busca.toLowerCase(); filtered = filtered.filter((l) => l.nome?.toLowerCase().includes(q) || l.telefone?.includes(q) || l.email?.toLowerCase().includes(q)); }
-  filtered = [...filtered].sort((a, b) => {
-    const va = (a as unknown as Record<string, unknown>)[sortCol] ?? "";
-    const vb = (b as unknown as Record<string, unknown>)[sortCol] ?? "";
-    if (va < vb) return sortDir === "asc" ? -1 : 1;
-    if (va > vb) return sortDir === "asc" ? 1 : -1;
-    return 0;
+    return new Set(ALL_COLUMNS.map((c: any) => c.key));
   });
 
+  useEffect(() => {
+    if (leads.length === 0) return;
+    if (typeof window !== "undefined" && localStorage.getItem("crm_visible_cols")) return;
+    const threshold = 0.7;
+    const sparseKeys = ["funil", "origem_utm", "canal_aquisicao", "valor_entrada", "mensalidade", "fidelidade_meses", "valor_total_projeto", "data_venda", "sdr_id"];
+    const toHide = sparseKeys.filter((key) => {
+      const emptyCount = leads.filter((l: any) => {
+        const v = l[key];
+        return !v || v === "—" || v === "" || v === 0 || v === "0" || v === null;
+      }).length;
+      return emptyCount / leads.length > threshold;
+    });
+    if (toHide.length > 0) {
+      setVisibleCols((prev) => {
+        const next = new Set(prev);
+        toHide.forEach((k) => next.delete(k));
+        localStorage.setItem("crm_visible_cols", JSON.stringify(Array.from(next)));
+        return next;
+      });
+    }
+  }, [leads]);
+
+  const toggleCol = (key: string) => {
+    setVisibleCols((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      localStorage.setItem("crm_visible_cols", JSON.stringify(Array.from(next)));
+      return next;
+    });
+  };
+
   const toggleSort = (col: string) => { if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc")); else { setSortCol(col); setSortDir("asc"); } };
-  const counts = ETAPAS.reduce<Record<string, number>>((acc, e) => { acc[e.key] = leads.filter((l) => l.etapa === e.key).length; return acc; }, {});
 
-  const EditCell = ({ lead, col, type = "text" }: { lead: LeadCrm; col: string; type?: string }) => {
-    const isEditing = editingCell?.rowId === lead.id && editingCell.col === col;
-    const val = String(getField(lead, col) ?? "");
-    if (isEditing) return (<input autoFocus type={type} value={tempValue} onChange={(e) => setTempValue(e.target.value)} onBlur={handleSave} onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") setEditingCell(null); }} className="w-full bg-transparent border-none outline-none text-[13px]" />);
-    return (<span onClick={() => { setEditingCell({ rowId: lead.id, col }); setTempValue(val === "0" && type === "number" ? "" : val); }} className="cursor-text hover:bg-muted/50 px-1 -mx-1 py-0.5 rounded truncate block">
-      {["valor_entrada", "mensalidade", "valor_total_projeto", "faturamento"].includes(col) ? (Number(val) > 0 ? formatCurrency(Number(val)) : "—") : val || "—"}
-    </span>);
-  };
+  // Advanced algorithmic optimizations through Heavy Memoization
+  const { filtered, kpiLeadsAtivos, kpiTaxaConversao, kpiTicketMedio, kpiTempoMedioFunil, leadsInativos, counts } = useMemo(() => {
+    let f = leads;
+    if (abaAtiva) f = f.filter((l) => l.etapa === abaAtiva);
+    if (closerFiltro !== "todos") f = f.filter((l) => closerFiltro === "sem" ? !l.closer_id : l.closer_id === closerFiltro);
+    if (abaAtiva === "comprou" && mes !== "all") {
+      f = f.filter((l) => { const dv = l.data_venda || l.mes_referencia; return dv?.startsWith(mes); });
+    }
+    if (debouncedBusca) {
+      const q = debouncedBusca.toLowerCase();
+      f = f.filter((l) => l.nome?.toLowerCase().includes(q) || l.telefone?.includes(q) || l.email?.toLowerCase().includes(q));
+    }
+    if (filtroCanal !== "todos") f = f.filter((l) => l.canal_aquisicao === filtroCanal);
+    if (filtroScoreRange) {
+      const [min, max] = filtroScoreRange.split("-").map(Number);
+      f = f.filter((l) => { const s = leadScore(l as any).score; return s >= min && s <= max; });
+    }
 
-  const DropCell = ({ lead, col, options, display }: { lead: LeadCrm; col: string; options: { value: string; label: string; color?: string }[]; display: string }) => {
-    const isOpen = openDropdown?.rowId === lead.id && openDropdown.col === col;
-    return (<div className="relative">
-      <button onClick={(e) => { e.stopPropagation(); setOpenDropdown(isOpen ? null : { rowId: lead.id, col }); }} className="text-xs hover:bg-muted/50 px-1 -mx-1 py-0.5 rounded cursor-pointer truncate">{display}</button>
-      {isOpen && (<div onClick={(e) => e.stopPropagation()} className="absolute top-full left-0 z-50 mt-1 bg-card border rounded-lg p-1 min-w-[160px] shadow-lg max-h-[200px] overflow-y-auto">
-        {options.map((o) => (<button key={o.value} onClick={() => { updateLead(lead.id, col, o.value); setOpenDropdown(null); }} className="w-full text-left px-3 py-1.5 rounded text-xs flex items-center gap-2 hover:bg-muted transition-colors">
-          {o.color && <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: o.color }} />}{o.label}
-        </button>))}
-      </div>)}
-    </div>);
-  };
+    const countAtivos = leads.filter((l) => l.etapa !== "desistiu" && l.etapa !== "frio").length;
+    const listComprou = leads.filter((l) => l.etapa === "comprou");
+    const convTotalOps = leads.length;
+    const taxaConversaoCalculada = convTotalOps > 0 ? (listComprou.length / convTotalOps) * 100 : 0;
+    const kpiTicketMedioCalc = listComprou.length > 0 ? listComprou.reduce((s, l) => s + Number(l.mensalidade || 0), 0) / listComprou.length : 0;
 
-  if (loading) return <div className="flex items-center justify-center h-64"><p className="text-muted-foreground">Carregando...</p></div>;
+    let tempoMedioCalc = 0;
+    const funilAtivos = leads.filter((l) => l.etapa !== "desistiu" && l.etapa !== "frio" && l.etapa !== "comprou" && l.created_at);
+    if (funilAtivos.length > 0) {
+      const now = Date.now();
+      const totalDays = funilAtivos.reduce((s, l) => s + Math.floor((now - new Date(l.created_at!).getTime()) / 86400000), 0);
+      tempoMedioCalc = Math.round(totalDays / funilAtivos.length);
+    }
+    const listInativos = leads.filter((l) => l.etapa === "oportunidade" && tempoNaEtapa(l).days > DIAS_INATIVO_LIMITE);
+
+    const fSorted = [...f].sort((a, b) => {
+      if (sortCol === "_tempo") return sortDir === "desc" ? tempoNaEtapa(b).days - tempoNaEtapa(a).days : tempoNaEtapa(a).days - tempoNaEtapa(b).days;
+      if (sortCol === "_score") return sortDir === "desc" ? leadScore(b as any).score - leadScore(a as any).score : leadScore(a as any).score - leadScore(b as any).score;
+      const va = (a as any)[sortCol] ?? "";
+      const vb = (b as any)[sortCol] ?? "";
+      if (va < vb) return sortDir === "asc" ? -1 : 1;
+      if (va > vb) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    const objCounts = ETAPAS.reduce<Record<string, number>>((acc, e) => { acc[e.key] = leads.filter((l) => l.etapa === e.key).length; return acc; }, {});
+
+    return {
+      filtered: fSorted, kpiLeadsAtivos: countAtivos, kpiTaxaConversao: taxaConversaoCalculada,
+      kpiTicketMedio: kpiTicketMedioCalc, kpiTempoMedioFunil: tempoMedioCalc,
+      leadsInativos: listInativos, counts: objCounts
+    };
+  }, [leads, abaAtiva, closerFiltro, mes, debouncedBusca, filtroCanal, filtroScoreRange, sortCol, sortDir]);
+
+  if (loading) return (
+    <div className="flex flex-col items-center justify-center h-[70vh] gap-4">
+      <div className="w-10 h-10 border-4 border-muted border-t-primary rounded-full animate-spin"></div>
+      <p className="text-muted-foreground animate-pulse text-sm">Carregando dados unificados do CRM...</p>
+    </div>
+  );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold">CRM de Leads</h1>
+        <div className="flex items-center gap-3">
+          <div className="w-1.5 h-6 bg-primary rounded-full"></div>
+          <h1 className="text-2xl font-bold tracking-tight">CRM de Leads</h1>
+          <div className="flex flex-col items-start ml-2">
+            <SyncButton source="ghl" onDone={() => { mutate(); setLastSync(new Date()); }} />
+            {lastSync && <span className="text-[10px] text-muted-foreground mt-0.5 font-medium ml-1">Atualizado {lastSync.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>}
+          </div>
+        </div>
         {abaAtiva === "comprou" && (
-          <select value={mes} onChange={(e) => setMes(e.target.value)} className="text-sm border rounded-lg px-3 py-2 bg-transparent">
+          <select value={mes} onChange={(e) => setMes(e.target.value)} className="text-sm border rounded-lg px-3 py-2 bg-card font-medium shadow-sm outline-none focus:ring-1 focus:ring-primary">
             <option value="all">Todos os meses</option>
             {["2026-04", "2026-03", "2026-02", "2026-01", "2025-12", "2025-11", "2025-10", "2025-09"].map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         )}
       </div>
 
-      {/* Abas */}
-      <div className="flex flex-wrap gap-1">
+      {(() => {
+        const semCanal = leads.filter((l) => !l.canal_aquisicao && !["comprou", "desistiu", "frio"].includes(l.etapa as string)).length;
+        const semCloser = leads.filter((l) => !l.closer_id && !["comprou", "desistiu", "frio"].includes(l.etapa as string)).length;
+        const ativos = leads.filter((l) => !["comprou", "desistiu", "frio"].includes(l.etapa as string)).length;
+        const pctSemCanal = ativos > 0 ? (semCanal / ativos) * 100 : 0;
+        const pctSemCloser = ativos > 0 ? (semCloser / ativos) * 100 : 0;
+        const alertas: string[] = [];
+        if (pctSemCanal > 50) alertas.push(`${pctSemCanal.toFixed(0)}% s/ canal`);
+        if (pctSemCloser > 50) alertas.push(`${pctSemCloser.toFixed(0)}% s/ closer`);
+        if (alertas.length === 0) return null;
+        return (
+          <div className="p-3 rounded-lg bg-orange-500/10 border border-orange-500/20 text-sm font-medium text-orange-500 flex items-center justify-between gap-3 flex-wrap shadow-sm">
+            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" /> Dados ausentes espaciais: {alertas.join(" · ")}</div>
+            <button onClick={() => { setAbaAtiva(null); setCloserFiltro("sem"); setFiltroCanal("todos"); setFiltroScoreRange("0-25"); setBusca(""); setVisibleCount(15); }}
+              className="text-xs px-3 py-1.5 bg-orange-500/20 text-orange-600 dark:text-orange-400 font-bold rounded-md hover:bg-orange-500/30 transition-all active:scale-95">
+              Filtrar
+            </button>
+          </div>
+        );
+      })()}
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { label: "Leads Ativos", val: kpiLeadsAtivos },
+          { label: "Taxa Conversão", val: `${kpiTaxaConversao.toFixed(1)}%`, color: "text-emerald-500" },
+          { label: "Ticket Médio", val: formatCurrency(kpiTicketMedio) },
+          { label: "Tempo Funil", val: `${kpiTempoMedioFunil} d.` },
+        ].map((k) => (
+          <div key={k.label} className="p-4 rounded-xl border border-border/60 bg-card shadow-sm flex flex-col gap-1">
+            <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">{k.label}</p>
+            <p className={`text-2xl font-black tracking-tight ${k.color || ""}`}>{k.val}</p>
+          </div>
+        ))}
+      </div>
+
+      {leadsInativos.length > 0 && (!abaAtiva || abaAtiva === "oportunidade") && (
+        <div className="flex items-center justify-between p-4 rounded-xl bg-orange-500/10 border border-orange-500/20 shadow-sm animate-in fade-in slide-in-from-top-1">
+          <span className="text-sm font-medium text-orange-600 dark:text-orange-400">{leadsInativos.length} leads em "Oportunidade" há mais de {DIAS_INATIVO_LIMITE} dias.</span>
+          <button onClick={async () => {
+            await Promise.all(leadsInativos.map(l => mudarEtapa(l.id, "frio")));
+          }} className="text-xs px-4 py-2 bg-orange-500/20 text-orange-600 dark:text-orange-400 font-bold rounded-lg hover:bg-orange-500/30 transition-colors shadow-sm active:scale-95">
+            Mover para Frio
+          </button>
+        </div>
+      )}
+
+      {(() => {
+        const taxaDesistencia = leads.length > 0 ? ((counts["desistiu"] || 0) / leads.length) * 100 : 0;
+        if (taxaDesistencia <= 40) return null;
+        return (
+          <div className="p-3 bg-rose-500/10 border border-rose-500/20 text-sm text-rose-500 font-medium rounded-xl">
+            <button onClick={() => { setAbaAtiva("desistiu"); setVisibleCount(15); }} className="hover:underline flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-rose-500" /> Taxa de desistencia incomum: {taxaDesistencia.toFixed(1)}%
+            </button>
+          </div>
+        );
+      })()}
+
+      <div className="flex flex-wrap gap-2 pt-2 scrollbar-hide pb-2">
         {ABAS.map((aba) => {
           const isActive = abaAtiva === aba.etapa;
           const count = aba.etapa ? counts[aba.etapa] || 0 : leads.length;
-          return (<button key={aba.label} onClick={() => setAbaAtiva(aba.etapa)} className={`px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5 transition-colors ${isActive ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/50"}`}>
-            {aba.label}<span className="text-[10px] bg-muted-foreground/10 px-1.5 py-0.5 rounded-full">{count}</span>
+          if (aba.etapa && count === 0) return null;
+          return (<button key={aba.label} onClick={() => { setAbaAtiva(aba.etapa); setVisibleCount(15); }} className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-3 transition-all ${isActive ? "bg-primary text-primary-foreground shadow-md ring-1 ring-primary/20 scale-100" : "bg-card text-muted-foreground hover:bg-muted border border-border scale-[0.98]"}`}>
+            {aba.label} <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isActive ? "bg-primary-foreground/20" : "bg-muted-foreground/10"}`}>{count}</span>
           </button>);
         })}
       </div>
 
-      {/* Busca */}
-      <div className="relative">
-        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-        <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar nome, telefone ou email..." className="w-full pl-9 pr-4 py-2 text-sm bg-transparent border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary" />
+      <CrmFilters
+        closers={closers} closerFiltro={closerFiltro} setCloserFiltro={setCloserFiltro}
+        busca={busca} setBusca={setBusca}
+        showColDropdown={showColDropdown} setShowColDropdown={setShowColDropdown}
+        showAdvFilters={showAdvFilters} setShowAdvFilters={setShowAdvFilters}
+        visibleCols={visibleCols} toggleCol={toggleCol} ALL_COLUMNS={ALL_COLUMNS as any}
+        filtroCanal={filtroCanal} setFiltroCanal={setFiltroCanal} canaisPossiveis={CANAIS}
+        filtroScoreRange={filtroScoreRange} setFiltroScoreRange={setFiltroScoreRange}
+      />
+
+      <CrmTable
+        filtered={filtered} visibleCount={visibleCount} visibleCols={visibleCols}
+        sortCol={sortCol} toggleSort={toggleSort}
+        updateLead={updateLead as any} mudarEtapa={mudarEtapa} deleteLead={deleteLead}
+        addNovoLead={() => { const mesRef = mes === "all" ? getCurrentMonth() : mes; addNovoLead(abaAtiva || "oportunidade", mesRef); }}
+        closers={closers} sdrs={sdrs}
+      />
+
+      <div className="flex items-center justify-between py-2 px-1">
+        <span className="text-[11px] font-medium text-muted-foreground">Mostrando {Math.min(visibleCount, filtered.length)} / {filtered.length} Leads</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Paginação:</span>
+          {[15, 30, 50, 100].map((n) => (
+            <button key={n} onClick={() => setVisibleCount(n)}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${visibleCount === n ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:bg-muted border border-border bg-card"}`}>
+              {n}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Tabela */}
-      <div className="border rounded-lg overflow-auto">
-        <table className="w-full text-[13px]">
-          <thead>
-            <tr className="border-b">
-              <th className="w-8 px-2 py-2" />
-              {[
-                { key: "nome", label: "Nome", w: "min-w-[160px]" },
-                { key: "etapa", label: "Etapa", w: "min-w-[130px]" },
-                { key: "closer_id", label: "Closer", w: "min-w-[90px]" },
-                { key: "sdr_id", label: "SDR", w: "min-w-[90px]" },
-                { key: "funil", label: "Funil", w: "min-w-[120px]" },
-                { key: "origem_utm", label: "Origem", w: "min-w-[100px]" },
-                { key: "canal_aquisicao", label: "Canal", w: "min-w-[110px]" },
-                { key: "valor_entrada", label: "Entrada", w: "min-w-[90px]" },
-                { key: "mensalidade", label: "Mensal.", w: "min-w-[90px]" },
-                { key: "fidelidade_meses", label: "Fidel.", w: "min-w-[60px]" },
-                { key: "valor_total_projeto", label: "Total", w: "min-w-[100px]" },
-                { key: "data_venda", label: "Dt Venda", w: "min-w-[90px]" },
-                { key: "preenchido_em", label: "Criado em", w: "min-w-[90px]" },
-              ].map((col) => (
-                <th key={col.key} onClick={() => toggleSort(col.key)} className={`${col.w} px-2 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground cursor-pointer select-none hover:text-foreground hover:bg-muted/50 whitespace-nowrap`}>
-                  <span className="flex items-center gap-1">{col.label}{sortCol === col.key && <ArrowUpDown size={9} />}</span>
-                </th>
-              ))}
-              <th className="w-8 px-1 py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((lead) => {
-              const cfg = etapaCfg(lead.etapa);
-              const isExp = expandedRow === lead.id;
-              return (
-                <Fragment key={lead.id}>
-                  <tr className="border-b hover:bg-muted/30 transition-colors">
-                    <td className="px-2 py-2">
-                      <button onClick={() => setExpandedRow(isExp ? null : lead.id)} className="w-5 h-5 rounded flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground">
-                        {isExp ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                      </button>
-                    </td>
-                    <td className="px-2 py-2 font-medium"><EditCell lead={lead} col="nome" /></td>
-                    <td className="px-2 py-2 relative">
-                      <button
-                        data-dropdown-trigger
-                        onClick={() => {
-                          const isOpen = openDropdown?.rowId === lead.id && openDropdown.col === "etapa";
-                          setOpenDropdown(isOpen ? null : { rowId: lead.id, col: "etapa" });
-                        }}
-                        className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap cursor-pointer hover:opacity-80"
-                        style={{ background: cfg.color + "18", color: cfg.color }}
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: cfg.color }} />{cfg.label}
-                      </button>
-                      {openDropdown?.rowId === lead.id && openDropdown.col === "etapa" && (
-                        <div data-dropdown-menu className="absolute top-full left-2 z-50 mt-1 bg-card border rounded-lg p-1 min-w-[170px] shadow-lg max-h-[300px] overflow-y-auto">
-                          {ETAPAS.map((e) => (<button key={e.key} onClick={() => { mudarEtapa(lead.id, e.key); setOpenDropdown(null); }} className="w-full text-left px-3 py-1.5 rounded text-xs flex items-center gap-2 hover:bg-muted transition-colors">
-                            <span className="w-2 h-2 rounded-full" style={{ background: e.color }} />{e.label}
-                          </button>))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-2 py-2"><DropCell lead={lead} col="closer_id" options={closers.map((c) => ({ value: c.id, label: c.nome }))} display={closerName(lead.closer_id)} /></td>
-                    <td className="px-2 py-2"><DropCell lead={lead} col="sdr_id" options={sdrs.map((s) => ({ value: s.id, label: s.nome }))} display={sdrName(lead.sdr_id)} /></td>
-                    <td className="px-2 py-2"><DropCell lead={lead} col="funil" options={FUNIL_OPTIONS.map((f) => ({ value: f, label: f }))} display={String(getField(lead, "funil") || "—")} /></td>
-                    <td className="px-2 py-2"><DropCell lead={lead} col="origem_utm" options={ORIGEM_OPTIONS.map((o) => ({ value: o, label: o }))} display={String(getField(lead, "origem_utm") || "—")} /></td>
-                    <td className="px-2 py-2"><DropCell lead={lead} col="canal_aquisicao" options={CANAIS.map((c) => ({ value: c, label: c }))} display={lead.canal_aquisicao || "—"} /></td>
-                    <td className="px-2 py-2 text-xs"><EditCell lead={lead} col="valor_entrada" type="number" /></td>
-                    <td className="px-2 py-2 text-xs"><EditCell lead={lead} col="mensalidade" type="number" /></td>
-                    <td className="px-2 py-2 text-xs"><EditCell lead={lead} col="fidelidade_meses" type="number" /></td>
-                    <td className="px-2 py-2 text-xs"><EditCell lead={lead} col="valor_total_projeto" type="number" /></td>
-                    <td className="px-2 py-2 text-xs"><EditCell lead={lead} col="data_venda" type="date" /></td>
-                    <td className="px-2 py-2 text-xs text-muted-foreground">
-                      {lead.preenchido_em ? new Date(lead.preenchido_em).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" }) : "—"}
-                    </td>
-                    <td className="px-1 py-2"><button onClick={() => deleteLead(lead.id)} className="text-muted-foreground hover:text-destructive"><Trash2 size={12} /></button></td>
-                  </tr>
-
-                  {isExp && (
-                    <tr className="bg-muted/30">
-                      <td colSpan={15} className="px-10 py-4">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 text-xs">
-                          <div><span className="text-muted-foreground">Telefone:</span> <EditCell lead={lead} col="telefone" /></div>
-                          <div><span className="text-muted-foreground">Email:</span> <EditCell lead={lead} col="email" /></div>
-                          <div><span className="text-muted-foreground">Instagram:</span> <EditCell lead={lead} col="instagram" /></div>
-                          <div><span className="text-muted-foreground">Site:</span> <EditCell lead={lead} col="site" /></div>
-                          <div><span className="text-muted-foreground">Area:</span> <EditCell lead={lead} col="area_atuacao" /></div>
-                          <div><span className="text-muted-foreground">Faturamento:</span> <EditCell lead={lead} col="faturamento" type="number" /></div>
-                          <div><span className="text-muted-foreground">Ad ID:</span> <span className="font-mono">{lead.ad_id || "—"}</span></div>
-                          <div><span className="text-muted-foreground">Lead ID:</span> <span className="font-mono">{String(getField(lead, "lead_id") || "—")}</span></div>
-                          <div><span className="text-muted-foreground">Link proposta:</span> <EditCell lead={lead} col="link_proposta" /></div>
-                          <div><span className="text-muted-foreground">Qualidade:</span> <span>{String(getField(lead, "qualidade_lead") || "—")}</span></div>
-                          <div><span className="text-muted-foreground">1o Follow up:</span> <EditCell lead={lead} col="follow_up_1" type="date" /></div>
-                          <div><span className="text-muted-foreground">2o Follow up:</span> <EditCell lead={lead} col="follow_up_2" type="date" /></div>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {[
-                            { key: "pontos_positivos", label: "PONTOS POSITIVOS", ph: "O que o lead gostou..." },
-                            { key: "objecoes", label: "OBJEÇÕES", ph: "Preço, timing..." },
-                            { key: "resumo_reuniao", label: "RESUMO GERAL", ph: "Como foi a reunião..." },
-                            { key: "proximo_passo", label: "PRÓXIMO PASSO", ph: "O que foi combinado..." },
-                          ].map((f) => (
-                            <div key={f.key}>
-                              <div className="text-[11px] font-medium text-muted-foreground mb-1 uppercase tracking-wider">{f.label}</div>
-                              <textarea defaultValue={String(getField(lead, f.key) || "")} onBlur={(e) => updateLead(lead.id, f.key, e.target.value || null)} placeholder={f.ph}
-                                className="w-full min-h-[60px] resize-y border rounded-md p-2 text-[13px] bg-background focus:outline-none focus:ring-1 focus:ring-primary" />
-                            </div>
-                          ))}
-                        </div>
-                        {lead.etapa === "desistiu" && (
-                          <div className="mt-3">
-                            <div className="text-[11px] font-medium text-muted-foreground mb-2 uppercase tracking-wider">MOTIVO DA DESISTENCIA</div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {MOTIVOS.map((m) => (<button key={m} onClick={() => updateLead(lead.id, "motivo_desistencia", m)}
-                                className={`px-3 py-1 rounded-full text-xs border transition-colors ${lead.motivo_desistencia === m ? "bg-red-500/10 border-red-500/30 text-red-500 font-medium" : "border-border text-muted-foreground hover:bg-muted"}`}>{m}</button>))}
-                            </div>
-                          </div>
-                        )}
-                        <div className="mt-3 flex flex-wrap gap-4 text-[11px] text-muted-foreground">
-                          <span>Criado em: <strong>{lead.preenchido_em ? new Date(lead.preenchido_em).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—"}</strong></span>
-                          <span>GHL: {lead.ghl_contact_id || "—"}</span>
-                          <span>Notion: {String(getField(lead, "notion_page_id") || "—")}</span>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-            <tr className="hover:bg-muted/30 cursor-pointer transition-colors" onClick={addNovoLead}>
-              <td colSpan={15} className="px-3 py-2.5 text-muted-foreground text-[13px]"><span className="flex items-center gap-1.5"><Plus size={14} /> Novo lead</span></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      {/* Totals */}
-      <div className="flex flex-wrap gap-4 p-3 bg-muted/50 rounded-lg text-sm">
-        <div className="flex flex-col"><span className="text-[10px] text-muted-foreground uppercase">Leads</span><span className="font-bold">{filtered.length}</span></div>
-        <div className="flex flex-col"><span className="text-[10px] text-muted-foreground uppercase">Soma Entrada</span><span className="font-bold text-green-500">{formatCurrency(filtered.reduce((s, l) => s + Number(l.valor_entrada || 0), 0))}</span></div>
-        <div className="flex flex-col"><span className="text-[10px] text-muted-foreground uppercase">Media Mensalidade</span><span className="font-bold">{formatCurrency(filtered.length > 0 ? filtered.reduce((s, l) => s + Number(l.mensalidade || 0), 0) / filtered.length : 0)}</span></div>
-        <div className="flex flex-col"><span className="text-[10px] text-muted-foreground uppercase">Soma Total Projetos</span><span className="font-bold text-green-500">{formatCurrency(filtered.reduce((s, l) => s + Number(l.valor_total_projeto || 0), 0))}</span></div>
+      <div className="flex flex-wrap gap-4 p-5 bg-card/60 backdrop-blur border border-border/50 rounded-2xl text-sm shadow-sm mt-4">
+        <div className="flex flex-col gap-1"><span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Leads em tela</span><span className="font-mono text-xl font-medium">{filtered.length}</span></div>
+        <div className="w-px bg-border/50 hidden md:block"></div>
+        <div className="flex flex-col gap-1"><span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Entrada Cash</span><span className="font-mono text-xl font-medium text-emerald-500">{formatCurrency(filtered.reduce((s, l) => s + Number(l.valor_entrada || 0), 0))}</span></div>
+        <div className="w-px bg-border/50 hidden md:block"></div>
+        <div className="flex flex-col gap-1"><span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Mensal (Avg)</span><span className="font-mono text-xl font-medium">{formatCurrency(filtered.length > 0 ? filtered.reduce((s, l) => s + Number(l.mensalidade || 0), 0) / filtered.length : 0)}</span></div>
+        <div className="w-px bg-border/50 hidden md:block"></div>
+        <div className="flex flex-col gap-1"><span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Lifetime Value Projeto</span><span className="font-mono text-xl font-medium text-emerald-500">{formatCurrency(filtered.reduce((s, l) => s + Number(l.valor_total_projeto || 0), 0))}</span></div>
       </div>
     </div>
   );

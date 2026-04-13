@@ -35,10 +35,23 @@ export function VideoKpiCards() {
   const avgCostThru = totalThru > 0 ? totalSpend / totalThru : 0;
   const avgTime = ads.length > 0 ? ads.reduce((s, a) => s + a.metrics.avgTimeWatched, 0) / ads.length : 0;
 
+  const hookClass =
+    avgHook >= 80 ? "border-l-2 border-l-green-500" :
+    avgHook >= 60 ? "border-l-2 border-l-yellow-500" :
+    "border-l-2 border-l-red-500";
+  const completionClass =
+    avgCompletion > 15 ? "border-l-2 border-l-green-500" :
+    avgCompletion >= 5 ? "border-l-2 border-l-yellow-500" :
+    "border-l-2 border-l-red-500";
+  const costThruClass =
+    avgCostThru <= 1.5 ? "border-l-2 border-l-green-500" :
+    avgCostThru <= 3.0 ? "border-l-2 border-l-yellow-500" :
+    "border-l-2 border-l-red-500";
+
   const kpis = [
-    { title: "Hook Rate", value: formatPercent(avgHook), className: avgHook >= 30 ? "border-l-2 border-l-green-500" : avgHook >= 15 ? "border-l-2 border-l-yellow-500" : "border-l-2 border-l-red-500", info: "Percentual de pessoas que pararam para assistir o vídeo após ver no feed. Fórmula: (plays / impressões) × 100. Acima de 30% é excelente." },
-    { title: "Completion Rate", value: formatPercent(avgCompletion), className: avgCompletion >= 40 ? "border-l-2 border-l-green-500" : "border-l-2 border-l-yellow-500", info: "Percentual de quem assistiu o vídeo até o final. Fórmula: (P100 / plays) × 100. Acima de 40% é muito bom." },
-    { title: "Custo/ThruPlay", value: formatCurrency(avgCostThru), className: "", info: "Quanto custa cada visualização completa (ou 15s). Fórmula: investido / thru-plays. Quanto menor, melhor." },
+    { title: "Hook Rate", value: formatPercent(avgHook), className: hookClass, info: "Percentual de pessoas que pararam para assistir o vídeo após ver no feed. Fórmula: (plays / impressões) × 100. Acima de 30% é excelente." },
+    { title: "Completion Rate", value: formatPercent(avgCompletion), className: completionClass, info: "Percentual de quem assistiu o vídeo até o final. Fórmula: (P100 / plays) × 100. Acima de 40% é muito bom." },
+    { title: "Custo/ThruPlay", value: formatCurrency(avgCostThru), className: costThruClass, info: "Quanto custa cada visualização completa (ou 15s). Fórmula: investido / thru-plays. Quanto menor, melhor." },
     { title: "Tempo Médio", value: fmtTime(avgTime), className: "", info: "Tempo médio que as pessoas assistem o vídeo antes de pular. Quanto maior, mais engajado está o público." },
     { title: "Total Plays", value: totalPlays.toLocaleString("pt-BR"), className: "", info: "Total de vezes que o vídeo começou a ser reproduzido no período selecionado." },
     { title: "ThruPlays", value: totalThru.toLocaleString("pt-BR"), className: "", info: "Total de visualizações completas (ou de pelo menos 15 segundos). É o que o Meta cobra no modelo ThruPlay." },

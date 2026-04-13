@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+export const revalidate = 60; // KPI aggregation
+
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -28,10 +30,10 @@ export async function GET(req: NextRequest) {
 
   // Buscar dados
   const [{ data: perf }, { data: prevPerf }, { data: leads }, { data: prevLeads }, { data: meta }] = await Promise.all([
-    supabase.from("ads_performance").select("*").gte("data_ref", dataInicio).lte("data_ref", dataFim),
-    supabase.from("ads_performance").select("*").gte("data_ref", prevInicioStr).lte("data_ref", prevFimStr),
-    supabase.from("leads_ads_attribution").select("*").gte("created_at", dataInicio + "T00:00:00").lte("created_at", dataFim + "T23:59:59"),
-    supabase.from("leads_ads_attribution").select("*").gte("created_at", prevInicioStr + "T00:00:00").lte("created_at", prevFimStr + "T23:59:59"),
+    supabase.from("ads_performance").select("*").gte("data_ref", dataInicio).lte("data_ref", dataFim).limit(365),
+    supabase.from("ads_performance").select("*").gte("data_ref", prevInicioStr).lte("data_ref", prevFimStr).limit(365),
+    supabase.from("leads_ads_attribution").select("*").gte("created_at", dataInicio + "T00:00:00").lte("created_at", dataFim + "T23:59:59").limit(1000),
+    supabase.from("leads_ads_attribution").select("*").gte("created_at", prevInicioStr + "T00:00:00").lte("created_at", prevFimStr + "T23:59:59").limit(1000),
     supabase.from("ads_metadata").select("*"),
   ]);
 

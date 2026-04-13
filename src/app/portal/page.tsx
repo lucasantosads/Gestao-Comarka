@@ -2,8 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
-import { hashPassword, setCloserSession } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,32 +23,35 @@ export default function PortalLoginPage() {
     }
 
     setLoading(true);
-    const senhaHash = await hashPassword(senha);
-
-    const { data: closer } = await supabase
-      .from("closers")
-      .select("*")
-      .eq("usuario", usuario.trim().toLowerCase())
-      .eq("senha_hash", senhaHash)
-      .eq("ativo", true)
-      .single();
-
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ usuario: usuario.trim().toLowerCase(), senha }),
+    });
+    const data = await res.json();
     setLoading(false);
 
-    if (!closer) {
-      toast.error("Usuario ou senha incorretos");
+    if (!res.ok || data.error) {
+      toast.error(data.error || "Erro ao entrar");
       return;
     }
 
-    setCloserSession(closer.id, closer.nome);
-    router.push("/portal/painel");
+    toast.success(`Bem-vindo, ${data.nome}!`);
+
+    if (data.role === "admin") {
+      router.push("/dashboard");
+    } else if (data.role === "sdr") {
+      router.push("/portal/painel-sdr");
+    } else {
+      router.push("/portal/painel");
+    }
   }
 
   return (
     <Card className="w-full max-w-sm">
       <CardHeader className="text-center">
         <CardTitle className="text-xl">Comarka Ads</CardTitle>
-        <p className="text-sm text-muted-foreground">Portal do Closer</p>
+        <p className="text-sm text-muted-foreground">Portal do Colaborador</p>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleLogin} className="space-y-4">

@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { getCloserSession, clearCloserSession } from "@/lib/auth";
+import { useAuth } from "@/contexts/AuthContext";
 import type { MetaCloser, Contrato } from "@/types/database";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,11 +19,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Save, LogOut } from "lucide-react";
+import { Save } from "lucide-react";
 
 export default function PortalPainelPage() {
   const router = useRouter();
-  const [session, setSession] = useState<{ closerId: string; closerNome: string } | null>(null);
+  const { user, loading: authLoading } = useAuth();
+  const session = user ? { closerId: user.entityId || "", closerNome: user.nome } : null;
   const [data, setData] = useState(() => new Date().toISOString().split("T")[0]);
   const [reunioesAgendadas, setReunioesAgendadas] = useState(0);
   const [reunioesFeitas, setReunioesFeitas] = useState(0);
@@ -35,15 +36,12 @@ export default function PortalPainelPage() {
   const [metaCloser, setMetaCloser] = useState<MetaCloser | null>(null);
   const [mrrTotal, setMrrTotal] = useState(0);
   const [ltvTotal, setLtvTotal] = useState(0);
+  const [contratos, setContratos] = useState(0);
+  const [reunioesTotalMes, setReunioesTotalMes] = useState({ agendadas: 0, feitas: 0 });
 
   useEffect(() => {
-    const s = getCloserSession();
-    if (!s) {
-      router.push("/portal");
-      return;
-    }
-    setSession(s);
-  }, [router]);
+    if (!authLoading && !user) router.push("/portal");
+  }, [authLoading, user, router]);
 
   const loadDay = useCallback(async () => {
     if (!session) return;
@@ -101,6 +99,12 @@ export default function PortalPainelPage() {
     const cts = (contratosData || []) as Contrato[];
     setMrrTotal(cts.reduce((s, c) => s + Number(c.mrr), 0));
     setLtvTotal(cts.reduce((s, c) => s + Number(c.valor_total_projeto), 0));
+    setContratos(cts.length);
+    if (lances) {
+      const totalAg = lances.reduce((s: number, l: { reunioes_marcadas: number }) => s + l.reunioes_marcadas, 0);
+      const totalFt = lances.reduce((s: number, l: { reunioes_feitas: number }) => s + l.reunioes_feitas, 0);
+      setReunioesTotalMes({ agendadas: totalAg, feitas: totalFt });
+    }
   }, [session, data]);
 
   useEffect(() => {
@@ -144,12 +148,7 @@ export default function PortalPainelPage() {
     loadHistorico();
   }
 
-  function logout() {
-    clearCloserSession();
-    router.push("/portal");
-  }
-
-  if (!session) {
+  if (!session || authLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <p className="text-muted-foreground">Carregando...</p>
@@ -161,15 +160,14 @@ export default function PortalPainelPage() {
 
   return (
     <div className="w-full max-w-3xl space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Ola, {session.closerNome}</h1>
-          <p className="text-sm text-muted-foreground">Portal do Closer</p>
-        </div>
-        <Button variant="outline" size="sm" onClick={logout}>
-          <LogOut size={14} className="mr-1" />
-          Sair
-        </Button>
+      <h1 className="text-xl font-bold">Ola, {session.closerNome}</h1>
+
+      {/* KPIs do mes */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Card><CardContent className="pt-3 pb-2"><p className="text-[10px] text-muted-foreground">Contratos</p><p className="text-lg font-bold text-green-400">{contratos}</p></CardContent></Card>
+        <Card><CardContent className="pt-3 pb-2"><p className="text-[10px] text-muted-foreground">MRR</p><p className="text-lg font-bold">{new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(mrrTotal)}</p></CardContent></Card>
+        <Card><CardContent className="pt-3 pb-2"><p className="text-[10px] text-muted-foreground">Reunioes Feitas</p><p className="text-lg font-bold">{reunioesTotalMes.feitas}</p></CardContent></Card>
+        <Card><CardContent className="pt-3 pb-2"><p className="text-[10px] text-muted-foreground">Conversao</p><p className="text-lg font-bold">{reunioesTotalMes.feitas > 0 ? ((contratos / reunioesTotalMes.feitas) * 100).toFixed(0) : 0}%</p></CardContent></Card>
       </div>
 
       {/* Gauges de Metas */}

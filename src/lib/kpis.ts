@@ -10,6 +10,7 @@ export interface KpiData {
   contratosGanhos: number;
   ltvTotal: number;
   mrrTotal: number;
+  entradaTotal: number;
   comissoesTotal: number;
   custoLead: number;
   percentLeadsReuniao: number;
@@ -25,10 +26,13 @@ export interface KpiData {
 export function calcKpis(
   lancamentos: LancamentoDiario[],
   config: ConfigMensal | null,
-  opts?: { contratos?: Contrato[]; crmLeads?: LeadCrm[] }
+  opts?: { contratos?: Contrato[]; crmLeads?: LeadCrm[]; metaSpend?: number; metaLeads?: number }
 ): KpiData {
-  const leads = config?.leads_totais ?? 0;
-  const investimento = Number(config?.investimento ?? 0);
+  // Leads: CRM a partir de abril/2026, config_mensal para meses anteriores, Meta como último fallback
+  const mesRef = config?.mes_referencia || "";
+  const usarCrm = mesRef >= "2026-04" && opts?.crmLeads?.length;
+  const leads = usarCrm ? opts!.crmLeads!.length : (config?.leads_totais || opts?.metaLeads || 0);
+  const investimento = opts?.metaSpend != null ? opts.metaSpend : Number(config?.investimento ?? 0);
 
   const reunioesAgendadas = lancamentos.reduce((s, l) => s + l.reunioes_marcadas, 0);
   const reunioesFeitas = lancamentos.reduce((s, l) => s + l.reunioes_feitas, 0);
@@ -41,6 +45,23 @@ export function calcKpis(
     : opts?.contratos
       ? opts.contratos.reduce((s, c) => s + Number(c.valor_total_projeto), 0)
       : lancamentos.reduce((s, l) => s + Number(l.ltv), 0);
+  const entradaTotal = comprouLeads && comprouLeads.length > 0
+    ? comprouLeads.reduce((s, l) => s + Number(l.valor_entrada || 0), 0)
+    : opts?.contratos
+      ? opts.contratos.reduce((s, c) => s + Number(c.valor_entrada || 0), 0)
+      : 0;
+  // Caixa real que entrou no mês pelos contratos novos, respeitando o flag
+  // entrada_e_primeiro_mes. Quando true, não soma MRR + entrada (duplicaria o
+  // primeiro mês). Quando false, soma os dois. Fallback para contratos antigos
+  // sem o flag: assume entrada_e_primeiro_mes=true (default seguro).
+  const caixaContratosNovos = opts?.contratos
+    ? opts.contratos.reduce((s, c) => {
+        const ent = Number(c.valor_entrada || 0);
+        const mrr = Number(c.mrr || 0);
+        const primeiro = (c as Contrato).entrada_e_primeiro_mes ?? true;
+        return s + (primeiro ? Math.max(ent, mrr) : ent + mrr);
+      }, 0)
+    : mrrTotal + entradaTotal;
   const comissoesTotal = mrrTotal * 0.1;
 
   const safe = (n: number, d: number) => (d > 0 ? n / d : 0);
@@ -55,6 +76,7 @@ export function calcKpis(
     contratosGanhos,
     ltvTotal,
     mrrTotal,
+    entradaTotal,
     comissoesTotal,
     custoLead: safe(investimento, leads),
     percentLeadsReuniao: safe(reunioesFeitas, leads) * 100,
@@ -63,8 +85,8 @@ export function calcKpis(
     cacMarketing: safe(investimento, contratosGanhos),
     cacAproximado: safe(investimento + comissoesTotal, contratosGanhos),
     ticketMedio: safe(mrrTotal, contratosGanhos),
-    roas: safe(mrrTotal, investimento),
-    resultadoTime: mrrTotal - (comissoesTotal + investimento),
+    roas: safe(ltvTotal, investimento),
+    resultadoTime: caixaContratosNovos - (comissoesTotal + investimento),
   };
 }
 

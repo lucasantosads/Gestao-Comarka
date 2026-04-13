@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { callAI } from "@/lib/ai-client";
 import { AI_CONFIG } from "@/lib/ai-config";
 import type { AIProvider } from "@/lib/ai-client";
+import { saveToNotion, providerToOrigem } from "@/lib/notion-save";
+
+export const revalidate = 0; // AI — no cache
 
 const DEFAULT_PROMPT = `Você é um especialista em performance comercial de agências de marketing digital focadas no nicho jurídico. Analise os dados de performance do closer abaixo e forneça:
 
@@ -23,6 +26,19 @@ export async function POST(req: NextRequest) {
       userContent: closerData,
       maxTokens: 2000,
     });
+
+    // Auto-save to Notion
+    const today = new Date().toISOString().split("T")[0];
+    saveToNotion({
+      titulo: `Análise de Closer — ${today}`,
+      iaOrigem: providerToOrigem(aiProvider),
+      tipo: "Performance",
+      tags: ["funil", "metricas"],
+      relevancia: "Media",
+      resumo: `Análise de performance de closer com diagnóstico, causas prováveis e plano de ação semanal.`,
+      conteudo: `# 👤 Análise de Performance do Closer\n> Diagnóstico individual com plano de ação\n\n**IA:** ${providerToOrigem(aiProvider)} · **Data:** ${today} · **Tipo:** Performance\n\n---\n\n## 📌 Dados do Closer\n${closerData}\n\n## 📊 Análise\n${result.text}\n\n---\n*Gerado automaticamente por ${providerToOrigem(aiProvider)} em ${today}*`,
+    }).catch((e) => console.error("[Notion] Background save failed:", e));
+
     return NextResponse.json({ analysis: result.text });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Erro ao processar a análise.";

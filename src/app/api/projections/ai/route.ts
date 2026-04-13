@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { callAI } from "@/lib/ai-client";
 import { AI_CONFIG } from "@/lib/ai-config";
 import type { AIProvider } from "@/lib/ai-client";
+import { saveToNotion, providerToOrigem } from "@/lib/notion-save";
+
+export const revalidate = 0; // AI — no cache
 
 const SYSTEM_PROMPT = `# AGENTE DE PERFORMANCE | AGÊNCIA DE MARKETING JURÍDICO
 
@@ -63,6 +66,19 @@ export async function POST(req: NextRequest) {
       userContent: projectionData,
       maxTokens: 4000,
     });
+
+    // Auto-save to Notion
+    const today = new Date().toISOString().split("T")[0];
+    saveToNotion({
+      titulo: `Análise Estratégica de Projeções — ${today}`,
+      iaOrigem: providerToOrigem(aiProvider),
+      tipo: "Performance",
+      tags: ["metricas", "funil", "trafego pago"],
+      relevancia: "Alta",
+      resumo: `Análise estratégica completa com diagnóstico de funil, projeções vs realidade e plano de ação. Gerada por ${aiProvider}.`,
+      conteudo: `# 📊 Análise Estratégica de Projeções\n> Diagnóstico completo de performance com plano de ação\n\n**IA:** ${providerToOrigem(aiProvider)} · **Data:** ${today} · **Tipo:** Performance\n\n---\n\n${result.text}\n\n---\n*Gerado automaticamente por ${providerToOrigem(aiProvider)} em ${today}*`,
+    }).catch((e) => console.error("[Notion] Background save failed:", e));
+
     return NextResponse.json({ analysis: result.text });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Erro ao gerar análise.";

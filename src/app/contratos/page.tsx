@@ -33,6 +33,7 @@ import { KpiCard } from "@/components/kpi-card";
 import { formatCurrency, getCurrentMonth } from "@/lib/format";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2 } from "lucide-react";
+import { CurrencyInput } from "@/components/currency-input";
 
 const ORIGENS = [
   "Tráfego Pago",
@@ -50,6 +51,7 @@ interface ContratoForm {
   valor_entrada: number;
   mrr: number;
   meses_contrato: number;
+  entrada_e_primeiro_mes: boolean;
   data_fechamento: string;
   obs: string;
 }
@@ -62,6 +64,7 @@ const emptyForm: ContratoForm = {
   valor_entrada: 0,
   mrr: 0,
   meses_contrato: 6,
+  entrada_e_primeiro_mes: true,
   data_fechamento: new Date().toISOString().split("T")[0],
   obs: "",
 };
@@ -132,6 +135,7 @@ export default function ContratosPage() {
       valor_entrada: Number(c.valor_entrada),
       mrr: Number(c.mrr),
       meses_contrato: c.meses_contrato,
+      entrada_e_primeiro_mes: (c as any).entrada_e_primeiro_mes ?? true,
       data_fechamento: c.data_fechamento,
       obs: c.obs || "",
     });
@@ -437,27 +441,17 @@ export default function ContratosPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Valor de Entrada (R$)</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step={0.01}
+                <Label>Valor de Entrada</Label>
+                <CurrencyInput
                   value={form.valor_entrada}
-                  onChange={(e) =>
-                    setForm({ ...form, valor_entrada: Number(e.target.value) })
-                  }
+                  onChange={(v) => setForm({ ...form, valor_entrada: v })}
                 />
               </div>
               <div className="space-y-2">
-                <Label>MRR (R$)</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step={0.01}
+                <Label>MRR</Label>
+                <CurrencyInput
                   value={form.mrr}
-                  onChange={(e) =>
-                    setForm({ ...form, mrr: Number(e.target.value) })
-                  }
+                  onChange={(v) => setForm({ ...form, mrr: v })}
                 />
               </div>
             </div>

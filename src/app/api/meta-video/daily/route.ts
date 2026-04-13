@@ -10,6 +10,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { metaFetchPaginated } from "@/lib/meta-fetch";
 import type { RawMetaInsight, DailyMetric } from "@/lib/types/metaVideo";
 
+export const revalidate = 120; // Meta Ads data
+
 const FIELDS = "ad_id,ad_name,impressions,video_play_actions,date_start";
 
 export async function GET(req: NextRequest) {

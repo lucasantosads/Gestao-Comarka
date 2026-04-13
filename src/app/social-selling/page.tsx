@@ -15,6 +15,7 @@ import { KpiCard } from "@/components/kpi-card";
 import { formatPercent, formatCurrency, formatNumber, getCurrentMonth } from "@/lib/format";
 import { toast } from "sonner";
 import { Plus } from "lucide-react";
+import { CurrencyInput } from "@/components/currency-input";
 
 interface SSLanc { id: string; social_seller_id: string; data: string; mes_referencia: string; perfis_prospectados: number; conexoes_enviadas: number; conexoes_aceitas: number; conversas_iniciadas: number; reunioes_agendadas: number; vendas: number; mrr_dia: number; obs: string | null; }
 interface SSMeta { id: string; social_seller_id: string; mes_referencia: string; meta_reunioes_agendadas: number; meta_vendas: number; meta_conexoes: number; }
@@ -169,8 +170,9 @@ export default function SocialSellingPage() {
             {[
               { k: "perfis_prospectados", l: "Perfis prospectados" }, { k: "conexoes_enviadas", l: "Conexoes enviadas" },
               { k: "conexoes_aceitas", l: "Conexoes aceitas" }, { k: "conversas_iniciadas", l: "Conversas iniciadas" },
-              { k: "reunioes_agendadas", l: "Reuniões agendadas" }, { k: "vendas", l: "Vendas" }, { k: "mrr_dia", l: "MRR (R$)" },
-            ].map((f) => (<div key={f.k} className="space-y-1"><Label>{f.l}</Label><Input type="number" min={0} step={f.k === "mrr_dia" ? 0.01 : 1} value={(form as Record<string, number | string>)[f.k]} onChange={(e) => setForm({ ...form, [f.k]: Number(e.target.value) })} /></div>))}
+              { k: "reunioes_agendadas", l: "Reuniões agendadas" }, { k: "vendas", l: "Vendas" },
+            ].map((f) => (<div key={f.k} className="space-y-1"><Label>{f.l}</Label><Input type="number" min={0} value={(form as Record<string, number | string>)[f.k]} onChange={(e) => setForm({ ...form, [f.k]: Number(e.target.value) })} /></div>))}
+            <div className="space-y-1"><Label>MRR</Label><CurrencyInput value={form.mrr_dia} onChange={(v) => setForm({ ...form, mrr_dia: v })} /></div>
             {form.conexoes_enviadas > 0 && <div className="p-2 bg-muted rounded text-xs">Taxa aceite: <strong>{formatPercent(safe(form.conexoes_aceitas, form.conexoes_enviadas) * 100)}</strong></div>}
             <div className="flex gap-3"><Button onClick={salvarLanc} disabled={saving} className="flex-1">{saving ? "Salvando..." : "Salvar"}</Button><Button variant="outline" onClick={() => setModalOpen(false)} className="flex-1">Cancelar</Button></div>
           </div>

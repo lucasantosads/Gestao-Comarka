@@ -6,6 +6,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { metaFetchPaginated } from "@/lib/meta-fetch";
 
+export const revalidate = 60; // KPI aggregation
+
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -27,7 +29,7 @@ async function fetchMetaSummary() {
     params: { level: "account" },
     since,
     until,
-    statusFilter: "ACTIVE",
+    // No status filter — capture spend from all campaigns (active + paused)
   });
 
   if (result.error || result.data.length === 0) return null;
@@ -101,21 +103,28 @@ async function fetchCrmSummary() {
 
 async function fetchDashSummary() {
   const mes = getCurrentMonth();
+  const now = new Date();
+  const until = now.toISOString().split("T")[0];
 
-  const [{ data: config }, { data: lancamentos }] = await Promise.all([
+  const [{ data: config }, { data: lancamentos }, { data: adsPerf }] = await Promise.all([
     supabase.from("config_mensal").select("leads_totais,investimento").eq("mes_referencia", mes).single(),
     supabase.from("lancamentos_diarios").select("mrr_dia,ganhos").eq("mes_referencia", mes),
+    supabase.from("ads_performance").select("spend,leads").gte("data_ref", mes + "-01").lte("data_ref", until),
   ]);
 
   const mrr = (lancamentos || []).reduce((s: number, l: { mrr_dia: number }) => s + Number(l.mrr_dia), 0);
   const ganhos = (lancamentos || []).reduce((s: number, l: { ganhos: number }) => s + l.ganhos, 0);
   const ticketMedio = ganhos > 0 ? mrr / ganhos : 0;
 
+  // Use Meta Ads real spend/leads when available
+  const metaSpend = (adsPerf || []).reduce((s: number, r: { spend: number }) => s + Number(r.spend), 0);
+  const metaLeads = (adsPerf || []).reduce((s: number, r: { leads: number }) => s + Number(r.leads), 0);
+
   return {
     ticketMedio,
     metaMensalSalva: null,
-    investimento: Number(config?.investimento ?? 0),
-    leadsTotais: config?.leads_totais ?? 0,
+    investimento: metaSpend > 0 ? metaSpend : Number(config?.investimento ?? 0),
+    leadsTotais: metaLeads > 0 ? metaLeads : (config?.leads_totais ?? 0),
   };
 }
 
@@ -123,11 +132,15 @@ async function fetchHistorico(mesesAtras: number) {
   const now = new Date();
   const target = new Date(now.getFullYear(), now.getMonth() - mesesAtras, 1);
   const mes = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}`;
+  // Last day of that month
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0);
+  const until = `${mes}-${String(lastDay.getDate()).padStart(2, "0")}`;
 
-  const [{ data: config }, { data: lancamentos }, { data: leads }] = await Promise.all([
+  const [{ data: config }, { data: lancamentos }, { data: leads }, { data: adsPerf }] = await Promise.all([
     supabase.from("config_mensal").select("leads_totais,investimento").eq("mes_referencia", mes).single(),
     supabase.from("lancamentos_diarios").select("reunioes_marcadas,reunioes_feitas,ganhos,mrr_dia,ltv").eq("mes_referencia", mes),
     supabase.from("leads_crm").select("etapa,valor_total_projeto").eq("mes_referencia", mes),
+    supabase.from("ads_performance").select("spend,leads").gte("data_ref", mes + "-01").lte("data_ref", until),
   ]);
 
   const lanc = lancamentos || [];
@@ -137,8 +150,12 @@ async function fetchHistorico(mesesAtras: number) {
   const ganhos = lanc.reduce((s: number, l: { ganhos: number }) => s + l.ganhos, 0);
   const mrr = lanc.reduce((s: number, l: { mrr_dia: number }) => s + Number(l.mrr_dia), 0);
   const ltv = lds.filter((l) => l.etapa === "comprou").reduce((s: number, l: { valor_total_projeto: number }) => s + Number(l.valor_total_projeto || 0), 0);
-  const totalLeads = config?.leads_totais ?? lds.length;
-  const investimento = Number(config?.investimento ?? 0);
+
+  // Use Meta Ads data when available, fallback to config_mensal
+  const metaSpend = (adsPerf || []).reduce((s: number, r: { spend: number }) => s + Number(r.spend), 0);
+  const metaLeads = (adsPerf || []).reduce((s: number, r: { leads: number }) => s + Number(r.leads), 0);
+  const totalLeads = metaLeads > 0 ? metaLeads : (config?.leads_totais ?? lds.length);
+  const investimento = metaSpend > 0 ? metaSpend : Number(config?.investimento ?? 0);
   const safe = (n: number, d: number) => d > 0 ? n / d : 0;
 
   return {
@@ -161,27 +178,31 @@ async function fetchHistorico(mesesAtras: number) {
 
 export async function GET() {
   try {
-    const [metaData, crmData, dashData, hist1, hist2, hist3] = await Promise.all([
+    // Fetch 12 months of history + current data in parallel
+    const histPromises = Array.from({ length: 12 }, (_, i) => fetchHistorico(i + 1).catch(() => null));
+
+    const [metaData, crmData, dashData, ...histResults] = await Promise.all([
       fetchMetaSummary().catch(() => null),
       fetchCrmSummary().catch(() => null),
       fetchDashSummary().catch(() => null),
-      fetchHistorico(1).catch(() => null),
-      fetchHistorico(2).catch(() => null),
-      fetchHistorico(3).catch(() => null),
+      ...histPromises,
     ]);
 
     return NextResponse.json({
       meta: metaData,
       crm: crmData,
       dash: dashData,
+      // Array of 12 months (index 0 = last month, index 11 = 12 months ago)
+      meses: histResults,
+      // Backwards compat
       historico: {
-        mesAnterior: hist1,
-        mes2: hist2,
-        mes3: hist3,
+        mesAnterior: histResults[0],
+        mes2: histResults[1],
+        mes3: histResults[2],
       },
     });
   } catch (err) {
     console.error("[projections/summary] Erro:", err);
-    return NextResponse.json({ meta: null, crm: null, dash: null, historico: null, error: String(err) }, { status: 500 });
+    return NextResponse.json({ meta: null, crm: null, dash: null, meses: [], historico: null, error: String(err) }, { status: 500 });
   }
 }

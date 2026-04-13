@@ -14,8 +14,26 @@ import {
   formatPercent,
   getCurrentMonth,
 } from "@/lib/format";
-import { ArrowLeft, Sparkles, ChevronDown, ChevronUp, Save } from "lucide-react";
+import { ArrowLeft, Sparkles, ChevronDown, ChevronUp, Save, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CurrencyInput } from "@/components/currency-input";
+import { toast } from "sonner";
+
+const ORIGENS = ["Tráfego Pago", "Orgânico", "Social Selling", "Indicação", "Workshop"];
+
+interface ContratoForm {
+  cliente_nome: string; origem_lead: string; sdr_id: string;
+  valor_entrada: number; mrr: number; meses_contrato: number;
+  valor_variavel: boolean; valores_mensais: number[]; obs: string;
+}
+const emptyContrato: ContratoForm = {
+  cliente_nome: "", origem_lead: "", sdr_id: "",
+  valor_entrada: 0, mrr: 0, meses_contrato: 6,
+  valor_variavel: false, valores_mensais: [], obs: "",
+};
 
 // --- Diagnóstico por regras fixas ---
 interface Diagnostico {
@@ -133,6 +151,24 @@ export default function CloserAnalysisPage() {
     ticketMedio: number; ticketMeta: number; metaContratos: number;
   } | null>(null);
 
+  // Lançamento diário
+  const [lancData, setLancData] = useState(() => new Date().toISOString().split("T")[0]);
+  const [lancReunAgend, setLancReunAgend] = useState(0);
+  const [lancReunFeitas, setLancReunFeitas] = useState(0);
+  const [lancContratos, setLancContratos] = useState<ContratoForm[]>([]);
+  const [lancSaving, setLancSaving] = useState(false);
+  const [lancExistingId, setLancExistingId] = useState<string | null>(null);
+  const [lancExistingCtIds, setLancExistingCtIds] = useState<string[]>([]);
+  const [sdrs, setSdrs] = useState<{ id: string; nome: string }[]>([]);
+  const lancNoShow = Math.max(0, lancReunAgend - lancReunFeitas);
+
+  function getLancMrr(c: ContratoForm) {
+    return c.valor_variavel && c.valores_mensais.length > 0
+      ? c.valores_mensais.reduce((s, v) => s + v, 0) / c.valores_mensais.length : c.mrr;
+  }
+  const lancTotalMrr = lancContratos.reduce((s, c) => s + getLancMrr(c), 0);
+  const lancTotalEntrada = lancContratos.reduce((s, c) => s + c.valor_entrada, 0);
+
   // IA
   const [iaLoading, setIaLoading] = useState(false);
   const [iaResult, setIaResult] = useState<string | null>(null);
@@ -147,6 +183,77 @@ export default function CloserAnalysisPage() {
   const [promptSaved, setPromptSaved] = useState(false);
 
   useEffect(() => { loadData(); setIaResult(null); setIaError(null); }, [id, mes]);
+  useEffect(() => { supabase.from("sdrs").select("id,nome").eq("ativo", true).order("nome").then(({ data: s }) => setSdrs((s || []) as { id: string; nome: string }[])); }, []);
+  useEffect(() => { if (id && lancData) loadLancExisting(); }, [id, lancData]);
+
+  async function loadLancExisting() {
+    const { data: lanc } = await supabase.from("lancamentos_diarios").select("*").eq("closer_id", id).eq("data", lancData).single();
+    if (lanc) {
+      setLancExistingId(lanc.id);
+      setLancReunAgend(lanc.reunioes_marcadas);
+      setLancReunFeitas(lanc.reunioes_feitas);
+      const mesRef = lancData.slice(0, 7);
+      const { data: cts } = await supabase.from("contratos").select("*").eq("closer_id", id).eq("data_fechamento", lancData).eq("mes_referencia", mesRef);
+      if (cts && cts.length > 0) {
+        setLancExistingCtIds(cts.map((c: { id: string }) => c.id));
+        setLancContratos(cts.map((c: { cliente_nome: string; origem_lead: string; sdr_id: string | null; valor_entrada: number; mrr: number; meses_contrato: number; obs: string | null }) => ({
+          cliente_nome: c.cliente_nome, origem_lead: c.origem_lead, sdr_id: c.sdr_id || "",
+          valor_entrada: Number(c.valor_entrada), mrr: Number(c.mrr), meses_contrato: c.meses_contrato,
+          valor_variavel: false, valores_mensais: [], obs: c.obs || "",
+        })));
+      } else { setLancExistingCtIds([]); setLancContratos([]); }
+    } else { setLancExistingId(null); setLancReunAgend(0); setLancReunFeitas(0); setLancContratos([]); setLancExistingCtIds([]); }
+  }
+
+  async function salvarLancamento() {
+    if (!id) return;
+    setLancSaving(true);
+    const mesRef = lancData.slice(0, 7);
+    // Calculate LTV from contracts
+    const lancTotalLtv = lancContratos.reduce((s, c) => {
+      if (c.valor_variavel && c.valores_mensais.length > 0) {
+        return s + c.valores_mensais.reduce((ss, v) => ss + v, 0);
+      }
+      return s + c.mrr * c.meses_contrato;
+    }, 0);
+
+    const lancPayload = {
+      closer_id: id, data: lancData, mes_referencia: mesRef,
+      reunioes_marcadas: lancReunAgend, reunioes_feitas: lancReunFeitas,
+      no_show: lancNoShow, ganhos: lancContratos.length, mrr_dia: lancTotalMrr, ltv: lancTotalLtv,
+    };
+    let lancId = lancExistingId;
+    if (lancId) {
+      const { error } = await supabase.from("lancamentos_diarios").update(lancPayload).eq("id", lancId);
+      if (error) { toast.error("Erro: " + error.message); setLancSaving(false); return; }
+    } else {
+      const { data: d, error } = await supabase.from("lancamentos_diarios").insert(lancPayload).select("id").single();
+      if (error) { toast.error("Erro: " + error.message); setLancSaving(false); return; }
+      lancId = d.id;
+      setLancExistingId(lancId);
+    }
+    // Contratos
+    for (let i = 0; i < lancContratos.length; i++) {
+      const c = lancContratos[i];
+      const ctPayload = {
+        closer_id: id, cliente_nome: c.cliente_nome, origem_lead: c.origem_lead,
+        sdr_id: c.sdr_id || null, data_fechamento: lancData, mes_referencia: mesRef,
+        valor_entrada: c.valor_entrada, mrr: c.mrr, meses_contrato: c.meses_contrato, obs: c.obs,
+      };
+      if (lancExistingCtIds[i]) {
+        await supabase.from("contratos").update(ctPayload).eq("id", lancExistingCtIds[i]);
+      } else {
+        await supabase.from("contratos").insert(ctPayload);
+      }
+    }
+    // Delete removed contracts
+    for (let i = lancContratos.length; i < lancExistingCtIds.length; i++) {
+      await supabase.from("contratos").delete().eq("id", lancExistingCtIds[i]);
+    }
+    toast.success("Lançamento salvo!");
+    setLancSaving(false);
+    loadData(); // refresh score
+  }
 
   async function loadData() {
     setLoading(true);
@@ -366,7 +473,98 @@ ${diagnosticos.map((d) => `- [${d.tipo.toUpperCase()}] ${d.titulo}: ${d.descrica
         </CardContent>
       </Card>
 
-      {/* D) Análise por IA */}
+      {/* D) Lançamento Diário */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">Lançamento Diário</CardTitle>
+            <input type="date" value={lancData} onChange={(e) => setLancData(e.target.value)} max={new Date().toISOString().split("T")[0]}
+              className="text-xs bg-transparent border rounded px-2 py-1.5 w-[140px]" />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <Label className="text-xs">Reuniões agendadas</Label>
+              <Input type="number" min={0} value={lancReunAgend} onChange={(e) => setLancReunAgend(Number(e.target.value))} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Reuniões feitas</Label>
+              <Input type="number" min={0} value={lancReunFeitas} onChange={(e) => setLancReunFeitas(Number(e.target.value))} />
+            </div>
+          </div>
+          {lancNoShow > 0 && <p className="text-xs text-red-400">No-show: {lancNoShow}</p>}
+
+          <div className="border-t pt-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium">Contratos ({lancContratos.length})</p>
+              <Button size="sm" variant="outline" onClick={() => setLancContratos([...lancContratos, { ...emptyContrato }])} className="text-xs">
+                <Plus size={12} className="mr-1" /> Contrato
+              </Button>
+            </div>
+            {lancContratos.map((c, i) => (
+              <div key={i} className="p-3 border rounded-lg space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Contrato {i + 1}</span>
+                  <Button size="sm" variant="ghost" onClick={() => setLancContratos(lancContratos.filter((_, j) => j !== i))} className="text-xs text-red-400 h-6 px-2">
+                    <Trash2 size={12} />
+                  </Button>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Cliente</Label>
+                    <Input value={c.cliente_nome} onChange={(e) => { const arr = [...lancContratos]; arr[i] = { ...arr[i], cliente_nome: e.target.value }; setLancContratos(arr); }} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Origem</Label>
+                    <Select value={c.origem_lead} onValueChange={(v) => { const arr = [...lancContratos]; arr[i] = { ...arr[i], origem_lead: v }; setLancContratos(arr); }}>
+                      <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                      <SelectContent>{ORIGENS.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Entrada</Label>
+                    <CurrencyInput value={c.valor_entrada} onChange={(v) => { const arr = [...lancContratos]; arr[i] = { ...arr[i], valor_entrada: v }; setLancContratos(arr); }} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">MRR</Label>
+                    <CurrencyInput value={c.mrr} onChange={(v) => { const arr = [...lancContratos]; arr[i] = { ...arr[i], mrr: v }; setLancContratos(arr); }} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Meses</Label>
+                    <Input type="number" min={1} value={c.meses_contrato} onChange={(e) => { const arr = [...lancContratos]; arr[i] = { ...arr[i], meses_contrato: Number(e.target.value) }; setLancContratos(arr); }} />
+                  </div>
+                </div>
+                {sdrs.length > 0 && (
+                  <div className="space-y-1">
+                    <Label className="text-xs">SDR (opcional)</Label>
+                    <Select value={c.sdr_id || ""} onValueChange={(v) => { const arr = [...lancContratos]; arr[i] = { ...arr[i], sdr_id: v }; setLancContratos(arr); }}>
+                      <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                      <SelectContent>{sdrs.map((s) => <SelectItem key={s.id} value={s.id}>{s.nome}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {(lancContratos.length > 0) && (
+            <div className="p-3 bg-muted/50 rounded-lg flex justify-between text-sm">
+              <span className="text-muted-foreground">Totais:</span>
+              <span>MRR: <strong>{formatCurrency(lancTotalMrr)}</strong> · Entrada: <strong>{formatCurrency(lancTotalEntrada)}</strong></span>
+            </div>
+          )}
+
+          <Button onClick={salvarLancamento} disabled={lancSaving} className="w-full">
+            <Save size={14} className="mr-2" />
+            {lancSaving ? "Salvando..." : lancExistingId ? "Atualizar Lançamento" : "Salvar Lançamento"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* E) Análise por IA */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">

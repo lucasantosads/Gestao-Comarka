@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+export const revalidate = 0; // AI — no cache
+
 interface ProviderStatus {
   provider: string;
   status: "ok" | "sem_creditos" | "erro" | "sem_chave";

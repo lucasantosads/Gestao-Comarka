@@ -11,6 +11,7 @@ import { formatCurrency } from "@/lib/format";
 import { calcularMetaReversa, getDiasUteisDoMes, getDiasUteisAte } from "@/lib/calculos";
 import { getCurrentMonth } from "@/lib/format";
 import { Calculator } from "lucide-react";
+import { CurrencyInput } from "@/components/currency-input";
 
 export default function CalculadoraPage() {
   const [mrrAlvo, setMrrAlvo] = useState(50000);
@@ -83,12 +84,12 @@ export default function CalculadoraPage() {
             <CardHeader><CardTitle className="text-base">Objetivo</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label>Quero fechar R$ ___ de MRR</Label>
-                <Input type="number" min={0} step={1000} value={mrrAlvo} onChange={(e) => setMrrAlvo(Number(e.target.value))} />
+                <Label>Quero fechar de MRR</Label>
+                <CurrencyInput value={mrrAlvo} onChange={setMrrAlvo} />
               </div>
               <div className="space-y-2"><Label>Taxa conversao (%)</Label><Input type="number" min={1} max={100} value={taxaConv} onChange={(e) => setTaxaConv(Number(e.target.value))} /></div>
               <div className="space-y-2"><Label>Taxa no show (%)</Label><Input type="number" min={0} max={100} value={taxaNoShow} onChange={(e) => setTaxaNoShow(Number(e.target.value))} /></div>
-              <div className="space-y-2"><Label>Ticket medio (R$)</Label><Input type="number" min={1} value={ticketMedio} onChange={(e) => setTicketMedio(Number(e.target.value))} /></div>
+              <div className="space-y-2"><Label>Ticket medio</Label><CurrencyInput value={ticketMedio} onChange={setTicketMedio} min={1} /></div>
               <div className="space-y-2"><Label>Dias uteis restantes</Label><Input type="number" min={1} value={diasUteis} onChange={(e) => setDiasUteis(Number(e.target.value))} /></div>
               <div className="space-y-2"><Label>Closers ativos</Label><Input type="number" min={1} value={numClosers} onChange={(e) => setNumClosers(Number(e.target.value))} /></div>
               <Button onClick={calcular} className="w-full" size="lg"><Calculator size={18} className="mr-2" />Calcular</Button>
