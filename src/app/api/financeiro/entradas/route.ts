@@ -6,7 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 
 export const revalidate = 120;
 
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+const supabase = createClient((process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co"), (process.env.SUPABASE_SERVICE_ROLE_KEY || "placeholder"));
 const safe = (n: number, d: number) => d > 0 ? n / d : 0;
 
 export async function GET(req: NextRequest) {

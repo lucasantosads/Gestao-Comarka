@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getClientes, updateClienteStatus } from "@/lib/data";
 
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+const supabase = createClient((process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co"), (process.env.SUPABASE_SERVICE_ROLE_KEY || "placeholder"));
 
 // Mapeia motivos do dropdown da UI para os valores aceitos pelo CHECK
 // constraint de churn_log.motivo. O texto original vai em motivo_detalhe.

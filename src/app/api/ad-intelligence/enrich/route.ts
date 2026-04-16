@@ -15,7 +15,7 @@ import { calculateCompositeScore } from "@/lib/traffic/score-calculator";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+const supabase = createClient((process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co"), (process.env.SUPABASE_SERVICE_ROLE_KEY || "placeholder"));
 
 const GHL_API_KEY = process.env.GHL_API_KEY!;
 const GHL_BASE = "https://services.leadconnectorhq.com";

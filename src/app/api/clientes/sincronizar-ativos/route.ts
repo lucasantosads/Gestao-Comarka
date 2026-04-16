@@ -20,7 +20,7 @@ import { getClientes, DB_IDS, updateClienteStatus } from "@/lib/data";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+const supabase = createClient((process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co"), (process.env.SUPABASE_SERVICE_ROLE_KEY || "placeholder"));
 
 const NOTION_KEY = process.env.NOTION_API_KEY || "";
 const API = "https://api.notion.com/v1";

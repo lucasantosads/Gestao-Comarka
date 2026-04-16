@@ -14,7 +14,7 @@ import { getSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+const supabase = createClient((process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co"), (process.env.SUPABASE_SERVICE_ROLE_KEY || "placeholder"));
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
