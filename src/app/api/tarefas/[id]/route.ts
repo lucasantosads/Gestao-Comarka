@@ -28,7 +28,11 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
 
-  const { error } = await supabase.from("tarefas").delete().eq("id", params.id);
+  // Soft delete
+  const { error } = await supabase.from("tarefas").update({
+    deleted_at: new Date().toISOString(),
+    deleted_by: session.employeeId,
+  }).eq("id", params.id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

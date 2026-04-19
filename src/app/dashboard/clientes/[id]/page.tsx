@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Sparkles, Plus, ChevronDown, ChevronRight, Activity, MessageCircle, Megaphone, ExternalLink, Trash2 } from "lucide-react";
 import Link from "next/link";
 import type { Cliente, NotionBlock } from "@/lib/data";
+import { NichoTesesSection } from "@/components/nicho-teses-section";
 
 const STATUS_OPTS = ["Ativo", "Pausado", "Inadimplente", "Aviso 30 dias", "Finalizado"];
 const CHURN_BLOCKED_FROM = ["Inadimplente", "Aviso 30 dias", "Finalizado"]; // Status que não podem virar Finalizado (churn)
@@ -984,6 +985,9 @@ Em português BR, forneça uma análise estratégica cruzando TODOS os dados aci
       )}
 
       {activeTab === "geral" && (<>
+      {/* Nicho & Teses (catálogo global) */}
+      <NichoTesesSection clienteId={String(id)} />
+
       {/* Teses (substitui a antiga seção Saúde do Cliente) */}
       <Card>
         <CardHeader>

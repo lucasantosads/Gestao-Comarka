@@ -209,6 +209,22 @@ export default function ProjecoesPage() {
         )}
       </AnimatePresence>
 
+      {/* Seletor de base histórica */}
+      <div className="flex items-center gap-3">
+        <span className="text-[10px] uppercase font-black text-muted-foreground tracking-widest">Base histórica:</span>
+        <div className="flex bg-muted/30 rounded-lg p-0.5 border border-border/50">
+          {([1, 3, 12] as const).map((p) => (
+            <button key={p} onClick={() => setHistPeriod(p)}
+              className={`px-3 py-1.5 text-[11px] font-bold rounded-md transition-all ${histPeriod === p ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+              {p === 1 ? "Último mês" : `Últimos ${p} meses`}
+            </button>
+          ))}
+        </div>
+        {histAvg.mesesComDados < histPeriod && histAvg.mesesComDados > 0 && (
+          <span className="text-[10px] text-yellow-400 font-medium">Dados insuficientes para {histPeriod} meses — usando {histAvg.mesesComDados} mês{histAvg.mesesComDados > 1 ? "es" : ""} disponível{histAvg.mesesComDados > 1 ? "is" : ""}</span>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* ESQUERDA - Input e Funil */}
         <div className="lg:col-span-8 space-y-6">
@@ -235,12 +251,18 @@ export default function ProjecoesPage() {
               <CardTitle className="text-sm uppercase font-black tracking-widest">Mapeamento Matemático Reverso</CardTitle>
             </CardHeader>
             <CardContent className="p-6 relative z-10">
+              {/* Funil visual */}
               <div className="flex flex-col md:flex-row items-center font-mono gap-4 w-full">
                 <div className="flex-1 text-center bg-muted/20 p-4 rounded-xl border border-border/40">
                   <p className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Volumetria de Leads</p>
                   <p className="text-3xl font-black">{projection.leadsNecessarios}</p>
                 </div>
-                <div className="text-muted-foreground text-[10px]">{Math.round(effective.taxaLeadReuniao * 100)}%</div>
+                <div className="text-muted-foreground text-[10px]">{Math.round(effective.taxaAgendamento * 100)}%</div>
+                <div className="flex-1 text-center bg-muted/20 p-4 rounded-xl border border-border/40">
+                  <p className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Agendamentos</p>
+                  <p className="text-3xl font-black">{projection.agendamentosNecessarios}</p>
+                </div>
+                <div className="text-muted-foreground text-[10px]">-{Math.round(effective.taxaNoShow * 100)}%</div>
                 <div className="flex-1 text-center bg-muted/20 p-4 rounded-xl border border-border/40">
                   <p className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Reuniões Efetivas</p>
                   <p className="text-3xl font-black">{projection.reunioesNecessarias}</p>
@@ -251,22 +273,53 @@ export default function ProjecoesPage() {
                   <p className="text-3xl font-black text-emerald-400">{projection.clientesNecessarios}</p>
                 </div>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6">
-                <div className="p-3 bg-red-500/5 border border-red-500/15 rounded-xl flex flex-col justify-between">
-                  <span className="text-[9px] uppercase text-red-400 font-bold tracking-widest mb-1">Perdas (No-Show)</span>
-                  <span className="text-xl font-bold font-mono">{projection.reunioesPerdidas}</span>
-                </div>
+
+              {/* Cards projetados com referência histórica */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-6">
                 <div className="p-3 bg-blue-500/5 border border-blue-500/15 rounded-xl flex flex-col justify-between">
-                  <span className="text-[9px] uppercase text-blue-400 font-bold tracking-widest mb-1">Budget Ads Mínimo</span>
-                  <span className="text-xl font-bold font-mono">{formatCurrency(projection.budgetNecessario)}</span>
+                  <span className="text-[9px] uppercase text-blue-400 font-bold tracking-widest mb-1">Investimento Tráfego</span>
+                  <span className="text-xl font-bold font-mono">{formatCurrency(projection.budgetViaCPL)}</span>
+                  <span className="text-[9px] text-muted-foreground mt-1">Invest. médio/mês: {formatCurrency(histAvg.investimentoMedio)}</span>
+                </div>
+                <div className="p-3 bg-slate-500/5 border border-slate-500/15 rounded-xl flex flex-col justify-between">
+                  <span className="text-[9px] uppercase text-slate-400 font-bold tracking-widest mb-1">Leads Necessários</span>
+                  <span className="text-xl font-bold font-mono">{projection.leadsNecessarios}</span>
+                  <span className="text-[9px] text-muted-foreground mt-1">Média/mês: {Math.round(histAvg.leadsMedio)} leads</span>
+                </div>
+                <div className="p-3 bg-cyan-500/5 border border-cyan-500/15 rounded-xl flex flex-col justify-between">
+                  <span className="text-[9px] uppercase text-cyan-400 font-bold tracking-widest mb-1">CPL Projetado</span>
+                  <span className="text-xl font-bold font-mono">{formatCurrency(projection.cplProjetado)}</span>
+                  <span className="text-[9px] text-muted-foreground mt-1">CPL histórico: {formatCurrency(histAvg.cpl)}</span>
+                </div>
+                <div className="p-3 bg-indigo-500/5 border border-indigo-500/15 rounded-xl flex flex-col justify-between">
+                  <span className="text-[9px] uppercase text-indigo-400 font-bold tracking-widest mb-1">Reuniões Agendadas</span>
+                  <span className="text-xl font-bold font-mono">{projection.agendamentosNecessarios}</span>
+                  <span className="text-[9px] text-muted-foreground mt-1">Média/mês: {Math.round(histAvg.reunioesMarcadasMedio)}</span>
+                </div>
+                <div className="p-3 bg-violet-500/5 border border-violet-500/15 rounded-xl flex flex-col justify-between">
+                  <span className="text-[9px] uppercase text-violet-400 font-bold tracking-widest mb-1">Reuniões Feitas</span>
+                  <span className="text-xl font-bold font-mono">{projection.reunioesNecessarias}</span>
+                  <span className="text-[9px] text-muted-foreground mt-1">Média/mês: {Math.round(histAvg.reunioesFeitasMedio)}</span>
+                </div>
+                <div className="p-3 bg-red-500/5 border border-red-500/15 rounded-xl flex flex-col justify-between">
+                  <span className="text-[9px] uppercase text-red-400 font-bold tracking-widest mb-1">No-Show Esperado</span>
+                  <span className="text-xl font-bold font-mono">{Math.round(effective.taxaNoShow * 100)}% ({projection.reunioesPerdidas})</span>
+                  <span className="text-[9px] text-muted-foreground mt-1">No-show hist.: {Math.round(histAvg.taxaNoShow * 100)}%</span>
                 </div>
                 <div className="p-3 bg-yellow-500/5 border border-yellow-500/15 rounded-xl flex flex-col justify-between">
-                  <span className="text-[9px] uppercase text-yellow-400 font-bold tracking-widest mb-1">Custo Reunião</span>
+                  <span className="text-[9px] uppercase text-yellow-400 font-bold tracking-widest mb-1">CPRF Projetado</span>
                   <span className="text-xl font-bold font-mono">{formatCurrency(projection.custoPorReuniaoProj)}</span>
+                  <span className="text-[9px] text-muted-foreground mt-1">CPRF hist.: {formatCurrency(histAvg.custoPorReuniao)}</span>
                 </div>
-                <div className="p-3 bg-purple-500/5 border border-purple-500/15 rounded-xl flex flex-col justify-between">
-                  <span className="text-[9px] uppercase text-purple-400 font-bold tracking-widest mb-1">Apenas via CPL</span>
-                  <span className="text-xl font-bold font-mono">{formatCurrency(projection.budgetViaCPL)}</span>
+                <div className="p-3 bg-emerald-500/5 border border-emerald-500/15 rounded-xl flex flex-col justify-between">
+                  <span className="text-[9px] uppercase text-emerald-400 font-bold tracking-widest mb-1">Ticket Médio Esperado</span>
+                  <span className="text-xl font-bold font-mono">{formatCurrency(effective.ticketMedio)}</span>
+                  <span className="text-[9px] text-muted-foreground mt-1">Ticket hist.: {formatCurrency(histAvg.ticketMedio)}</span>
+                </div>
+                <div className="p-3 bg-green-500/5 border border-green-500/15 rounded-xl flex flex-col justify-between">
+                  <span className="text-[9px] uppercase text-green-400 font-bold tracking-widest mb-1">Contratos Necessários</span>
+                  <span className="text-xl font-bold font-mono">{projection.clientesNecessarios}</span>
+                  <span className="text-[9px] text-muted-foreground mt-1">Média/mês: {Math.round(histAvg.contratosMedio)}</span>
                 </div>
               </div>
               {gargaloTrafego && (

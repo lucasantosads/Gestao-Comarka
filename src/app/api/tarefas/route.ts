@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   const filtro = req.nextUrl.searchParams.get("filtro") || "minhas"; // minhas | criadas | todas
   const entityId = session.entityId;
 
-  let query = supabase.from("tarefas").select("*").order("prazo", { ascending: true });
+  let query = supabase.from("tarefas").select("*").is("deleted_at", null).order("prazo", { ascending: true });
 
   if (session.role !== "admin" && filtro === "minhas") {
     query = query.eq("atribuido_para", entityId);

@@ -17,6 +17,17 @@ const GHL_HEADERS = { Authorization: `Bearer ${GHL_API_KEY}`, Version: "2021-07-
 
 const SOCIAL_SELLING_ID = "ZDPE5d5UKi8mDQRaVw8o";
 
+async function ghlFetch(url: string, retries = 3): Promise<Response> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    const res = await fetch(url, { headers: GHL_HEADERS });
+    if (res.status !== 429) return res;
+    const retryAfter = parseInt(res.headers.get("retry-after") || "0");
+    const delay = retryAfter > 0 ? retryAfter * 1000 : Math.min(2000 * Math.pow(2, attempt), 10000);
+    await new Promise((r) => setTimeout(r, delay));
+  }
+  return fetch(url, { headers: GHL_HEADERS });
+}
+
 // Custom field IDs do GHL — verificados via /locations/{id}/customFields em 2026-04-08.
 // Se forem recriados no GHL, atualizar aqui.
 const GHL_CUSTOM_FIELDS = {
@@ -52,7 +63,7 @@ const contactCache = new Map<string, GhlContactFull | null>();
 async function fetchContactFull(contactId: string): Promise<GhlContactFull | null> {
   if (contactCache.has(contactId)) return contactCache.get(contactId)!;
   try {
-    const res = await fetch(`${GHL_BASE}/contacts/${contactId}`, { headers: GHL_HEADERS });
+    const res = await ghlFetch(`${GHL_BASE}/contacts/${contactId}`);
     if (!res.ok) { contactCache.set(contactId, null); return null; }
     const data = await res.json();
     const contact = data.contact as GhlContactFull | undefined;
@@ -111,7 +122,7 @@ const ETAPA_MAP: Record<string, string> = {
 async function syncGHL(days: number) {
   const results: { pipelines: number; opportunities: number; errors: number; error_samples?: string[]; error?: string } = { pipelines: 0, opportunities: 0, errors: 0 };
 
-  const pipRes = await fetch(`${GHL_BASE}/opportunities/pipelines?locationId=${GHL_LOCATION_ID}`, { headers: GHL_HEADERS });
+  const pipRes = await ghlFetch(`${GHL_BASE}/opportunities/pipelines?locationId=${GHL_LOCATION_ID}`);
   if (!pipRes.ok) return { ...results, error: `GHL pipelines: ${pipRes.status}` };
   const pipData = await pipRes.json();
   const pipelines = (pipData.pipelines || []).filter((p: { id: string }) => p.id !== SOCIAL_SELLING_ID);
@@ -121,9 +132,8 @@ async function syncGHL(days: number) {
     let page = 1;
     let hasMore = true;
     while (hasMore) {
-      const oppRes = await fetch(
-        `${GHL_BASE}/opportunities/search?location_id=${GHL_LOCATION_ID}&pipeline_id=${pipeline.id}&limit=100&page=${page}`,
-        { headers: GHL_HEADERS }
+      const oppRes = await ghlFetch(
+        `${GHL_BASE}/opportunities/search?location_id=${GHL_LOCATION_ID}&pipeline_id=${pipeline.id}&limit=100&page=${page}`
       );
       if (!oppRes.ok) { results.errors++; break; }
       const oppData = await oppRes.json();

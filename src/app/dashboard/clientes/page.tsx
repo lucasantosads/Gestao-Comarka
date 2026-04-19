@@ -232,6 +232,7 @@ export default function ClientesPage() {
   };
 
   const [showAlertasModal, setShowAlertasModal] = useState(false);
+  const [alertasExpandidos, setAlertasExpandidos] = useState<Record<string, boolean>>({});
 
   // helper de alertas por cliente
   const alertasDoCliente = (c: Cliente) => {
@@ -304,19 +305,43 @@ export default function ClientesPage() {
         </div>
       </div>
 
-      {/* Alertas */}
+      {/* Alertas (colapsáveis por padrão) */}
       {(feedbackVencidos.length > 0 || piorando.length > 0) && (
         <div className="space-y-2">
           {feedbackVencidos.length > 0 && (
-            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400 flex items-start gap-2">
-              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-              <span><strong>{feedbackVencidos.length} clientes</strong> com feedback vencido (&gt;10 dias): {feedbackVencidos.slice(0, 5).map((c) => c.nome).join(", ")}{feedbackVencidos.length > 5 ? "..." : ""}</span>
+            <div className="rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+              <button
+                onClick={() => setAlertasExpandidos((p) => ({ ...p, feedback: !p.feedback }))}
+                className="w-full p-3 flex items-center gap-2 hover:bg-red-500/5 transition-colors"
+              >
+                {alertasExpandidos.feedback ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                <AlertTriangle size={14} className="shrink-0" />
+                <strong>{feedbackVencidos.length} clientes</strong>
+                <span className="text-red-400/70">com feedback vencido (&gt;10 dias)</span>
+              </button>
+              {alertasExpandidos.feedback && (
+                <div className="px-3 pb-3 pl-11 text-red-400/80">
+                  {feedbackVencidos.slice(0, 5).map((c) => c.nome).join(", ")}{feedbackVencidos.length > 5 ? "..." : ""}
+                </div>
+              )}
             </div>
           )}
           {piorando.length > 0 && (
-            <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-xs text-yellow-400 flex items-start gap-2">
-              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-              <span><strong>{piorando.length} clientes</strong> com situação piorando/crítica: {piorando.slice(0, 5).map((c) => c.nome).join(", ")}{piorando.length > 5 ? "..." : ""}</span>
+            <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-xs text-yellow-400">
+              <button
+                onClick={() => setAlertasExpandidos((p) => ({ ...p, piorando: !p.piorando }))}
+                className="w-full p-3 flex items-center gap-2 hover:bg-yellow-500/5 transition-colors"
+              >
+                {alertasExpandidos.piorando ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                <AlertTriangle size={14} className="shrink-0" />
+                <strong>{piorando.length} clientes</strong>
+                <span className="text-yellow-400/70">com situação piorando/crítica</span>
+              </button>
+              {alertasExpandidos.piorando && (
+                <div className="px-3 pb-3 pl-11 text-yellow-400/80">
+                  {piorando.slice(0, 5).map((c) => c.nome).join(", ")}{piorando.length > 5 ? "..." : ""}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -324,24 +349,31 @@ export default function ClientesPage() {
 
       {/* Alerta de divergência Entrada vs Churn (5e) */}
       {divergencia && divergencia.divergencia > 0 && (
-        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-400 flex items-start justify-between gap-3">
-          <div className="flex items-start gap-2">
-            <ShieldAlert size={16} className="shrink-0 mt-0.5" />
-            <div>
-              <p className="font-medium">Divergência Entrada vs Churn detectada</p>
+        <div className="rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-400">
+          <button
+            onClick={() => setAlertasExpandidos((p) => ({ ...p, divergencia: !p.divergencia }))}
+            className="w-full p-3 flex items-center gap-2 hover:bg-red-500/5 transition-colors"
+          >
+            {alertasExpandidos.divergencia ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            <ShieldAlert size={14} className="shrink-0" />
+            <span className="font-medium">Divergência Entrada vs Churn detectada</span>
+            <span className="text-red-400/70">({divergencia.divergencia} cliente{divergencia.divergencia > 1 ? "s" : ""})</span>
+          </button>
+          {alertasExpandidos.divergencia && (
+            <div className="px-3 pb-3 pl-11 flex items-center justify-between gap-3">
               <p>{divergencia.divergencia} cliente(s) com inconsistência entre os módulos.</p>
+              <div className="flex items-center gap-2 shrink-0">
+                <button onClick={() => setShowDivModal(true)} className="px-2 py-1 border border-red-500/30 rounded hover:bg-red-500/20 text-[10px]">Ver detalhes</button>
+                <button onClick={async () => {
+                  if (divergencia.id) {
+                    await fetch("/api/clientes/consistencia-log", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: divergencia.id }) });
+                    setDivergencia(null);
+                    toast.success("Marcado como resolvido");
+                  }
+                }} className="px-2 py-1 border border-red-500/30 rounded hover:bg-red-500/20 text-[10px]">Marcar resolvido</button>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button onClick={() => setShowDivModal(true)} className="px-2 py-1 border border-red-500/30 rounded hover:bg-red-500/20 text-[10px]">Ver detalhes</button>
-            <button onClick={async () => {
-              if (divergencia.id) {
-                await fetch("/api/clientes/consistencia-log", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: divergencia.id }) });
-                setDivergencia(null);
-                toast.success("Marcado como resolvido");
-              }
-            }} className="px-2 py-1 border border-red-500/30 rounded hover:bg-red-500/20 text-[10px]">Marcar resolvido</button>
-          </div>
+          )}
         </div>
       )}
 

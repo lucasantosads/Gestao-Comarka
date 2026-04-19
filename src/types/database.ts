@@ -193,6 +193,8 @@ export interface LeadCrm {
   /** Data de INSERT no Supabase (não usar para filtros de período) */
   created_at: string;
   updated_at: string;
+  lead_avulso?: boolean;
+  fonte_avulso?: string | null;
 }
 
 export interface LeadCrmHistorico {

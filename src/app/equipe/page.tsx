@@ -104,19 +104,10 @@ export default function EquipePage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <Card className="bg-card/40 backdrop-blur border-border/50 shadow-sm"><CardContent className="p-4 flex flex-col items-center"><p className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground mb-1">Total Ativos</p><p className="text-3xl font-black">{employees.filter((e) => e.ativo).length}</p></CardContent></Card>
-        <Card className="bg-card/40 backdrop-blur border-border/50 shadow-sm"><CardContent className="p-4 flex flex-col items-center"><p className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground mb-1">Vendas (Pipeline)</p><p className="text-3xl font-black text-blue-400">{employees.filter((e) => e.role === "closer" && e.ativo).length}</p></CardContent></Card>
-        <Card className="bg-card/40 backdrop-blur border-border/50 shadow-sm"><CardContent className="p-4 flex flex-col items-center"><p className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground mb-1">SDRs</p><p className="text-3xl font-black text-teal-400">{employees.filter((e) => e.role === "sdr" && e.ativo).length}</p></CardContent></Card>
-        <Link href="/custos-fixos" className="group">
-          <Card className="bg-emerald-500/5 backdrop-blur border-emerald-500/20 shadow-sm group-hover:bg-emerald-500/10 transition-colors h-full flex items-center justify-center">
-            <CardContent className="p-4 flex flex-col items-center text-emerald-500">
-              <BadgeDollarSign size={20} className="mb-2 opacity-80" />
-              <p className="text-[10px] uppercase font-bold tracking-widest mb-1 text-emerald-600 dark:text-emerald-400">Ver Folhas</p>
-              <span className="text-xs font-semibold underline decoration-emerald-500/30 group-hover:decoration-emerald-500/80 underline-offset-2">DRE / Financeiro</span>
-            </CardContent>
-          </Card>
-        </Link>
+        <Card className="bg-card/40 backdrop-blur border-border/50 shadow-sm"><CardContent className="p-4 flex flex-col items-center"><p className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground mb-1">Inativos</p><p className="text-3xl font-black text-muted-foreground">{employees.filter((e) => !e.ativo).length}</p></CardContent></Card>
+        <Card className="bg-card/40 backdrop-blur border-border/50 shadow-sm"><CardContent className="p-4 flex flex-col items-center"><p className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground mb-1">Departamentos</p><p className="text-3xl font-black text-indigo-400">{new Set(employees.filter((e) => e.ativo).map((e) => e.cargo || e.role)).size}</p></CardContent></Card>
       </div>
 
       {loading && (

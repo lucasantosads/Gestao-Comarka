@@ -6,6 +6,329 @@ Guia completo do sistema. Atualizado a cada mudança no projeto.
 
 ## 0. ÚLTIMAS MUDANÇAS
 
+### 2026-04-19 — Módulo de produtividade replicado no comarka-operacional
+
+Banco compartilhado (mesmo Supabase `ogfnojbbvumujzfklkhh`) — nenhuma migration necessária.
+
+**Tarefa 1 — Timer com time_sessions:**
+- Timer start (`/api/tarefas/[id]/timer/start`): cria registro em `time_sessions`
+- Timer stop (`/api/tarefas/[id]/timer/stop`): fecha sessão com `pausado_em` e `duracao_segundos`
+- Concluir (`/api/tarefas/[id]/concluir`): fecha sessão se timer ativo antes de concluir
+
+**Tarefa 2 — Meu Tempo:**
+- Página: `/portal/meu-tempo` — timer em tempo real, barra de meta, chart 7 dias, donut 30 dias, tarefas recentes
+- API: `/api/meu-tempo?colaborador_id=...` — adapta queries para tabela `tarefas` (campo `timer_ativo`/`timer_iniciado_em` ao invés de `em_andamento`/`ultimo_inicio`)
+- Link "Meu Tempo" adicionado no header do `/meu-portal`
+
+**Tarefa 3 — Painel de produtividade gerencial:**
+- Página: `/produtividade` — Geral + Individual com tabs, polling 30s
+- API: `/api/produtividade` (substituiu a versão básica) — status em tempo real, KPIs, ranking, alertas inatividade, visão individual com comparativo semanal + gráfico 30 dias
+- Configurações: `/config` + `/api/produtividade/config` — meta horas, threshold inatividade, metas individuais, CRUD tipos de tarefa
+
+**Sidebar:**
+- Item "Produtividade" (admin-only) adicionado
+- Link "Configurações" adicionado no footer (admin-only)
+
+**Arquivos do comarka-operacional modificados/criados:**
+- `src/app/api/tarefas/[id]/timer/start/route.ts` — + time_sessions insert
+- `src/app/api/tarefas/[id]/timer/stop/route.ts` — + time_sessions close
+- `src/app/api/tarefas/[id]/concluir/route.ts` — + time_sessions close
+- `src/app/api/meu-tempo/route.ts` — novo
+- `src/app/portal/meu-tempo/page.tsx` — novo
+- `src/app/api/produtividade/route.ts` — reescrito
+- `src/app/api/produtividade/config/route.ts` — novo
+- `src/app/produtividade/page.tsx` — novo
+- `src/app/config/page.tsx` — novo
+- `src/app/meu-portal/page.tsx` — link Meu Tempo
+- `src/components/sidebar.tsx` — Produtividade + Configurações
+
+### 2026-04-18 — Unificação de fontes Equipe + Desempenho do Closer + Kanban melhorado
+
+**Equipe Geral — Migração de Notion para Supabase**:
+- Página `/equipe-geral` agora usa `/api/employees` (Supabase) como fonte única
+- Anteriormente usava Notion com 11 pessoas hardcoded em `notion.ts`
+- Ambas as páginas (Equipe Geral e Gestão) agora compartilham a mesma fonte `employees`
+- Adicionar/desativar colaborador em qualquer uma reflete na outra
+- Cards linkam para `/equipe/{id}` (detalhe do colaborador no Supabase)
+- Classificação por cargo/setor/nível mantida com mesma lógica visual
+
+**Gestão de Pessoal — Limpeza de métricas de vendas**:
+- Removido: card "Vendas (Pipeline)" (contagem de closers)
+- Removido: card "SDRs" (contagem de SDRs)
+- Removido: link "Ver Folhas / DRE / Financeiro"
+- Adicionado: card "Inativos" e "Departamentos" (contagem de cargos únicos)
+- Modais de criação/edição mantidos intactos
+
+**Portal do Closer — Seção Desempenho expandida**:
+- Nova seção "Desempenho" com seletor de mês/ano no topo
+- Grupo "Reuniões": Marcadas, Feitas, No-Show, Taxa No-Show (cores: verde <10%, laranja 10-20%, vermelho >20%)
+- Grupo "Financeiro": Entrada (`contratos.valor_entrada`), MRR Fechado (`contratos.mrr`), LTV Fechado (`contratos.valor_total_projeto`), Ticket Médio (LTV/contratos), Ganhos (`lancamentos_diarios.ganhos`), Comissão (`lancamentos_diarios.comissao_dia`)
+- Todos os dados filtrados por `closer_id` do usuário logado e `mes_referencia` selecionado
+- LTV sempre de `contratos.valor_total_projeto` (nunca de `lancamentos_diarios.ltv`)
+
+**Kanban de Tarefas — Badge de atrasada + Modal centralizado**:
+- Tarefas com `data_vencimento` passada e `status != concluido` exibem badge vermelho "Atrasada"
+- Borda do card fica vermelha
+- Click no card abre modal centralizado (80vw × 85vh) com:
+  - Coluna esquerda (60%): título e descrição editáveis inline com autosave (debounce 1s)
+  - Coluna direita (40%): status, responsável, solicitante, cliente (busca), data vencimento, data criação
+- Drag & drop do kanban não é afetado pelo click
+
+### 2026-04-18 — Novo Lead via GHL ou Avulso no CRM
+
+**Migration:** `migrations/migration-leads-avulso.sql` — adiciona `lead_avulso` (boolean, default false) e `fonte_avulso` (text) em `leads_crm`. `ghl_contact_id` já existia.
+
+**API:** `src/app/api/ghl/contacts/route.ts`
+- `GET ?query=...` — busca contatos no GHL via API `GET /contacts/?locationId=DlN4Ua95aZZCaR8qA5Nh&query=...`. Retorna id, name, phone, email. Mínimo 2 caracteres, limit 15.
+
+**Tipo:** `src/types/database.ts` — `LeadCrm` agora inclui `lead_avulso?: boolean` e `fonte_avulso?: string | null`.
+
+**Hook:** `src/hooks/use-crm-data.ts` — `addNovoLead` aceita parâmetro `extra` opcional com `nome`, `telefone`, `email`, `ghl_contact_id`, `lead_avulso`, `fonte_avulso`.
+
+**Componente:** `src/components/novo-lead-dialog.tsx` — Dialog shadcn/ui com 2 tabs:
+- **Vincular GHL:** campo de busca com debounce 500ms, lista de resultados com nome/telefone/badge GHL. Ao selecionar, cria lead com `ghl_contact_id` preenchido e `lead_avulso = false`.
+- **Lead avulso:** campos nome (obrigatório), telefone, email, fonte (obrigatório — select com Indicação/Orgânico/Evento/Parceria/Outro). Cria lead com `lead_avulso = true`, `fonte_avulso` preenchida, sem webhook GHL.
+
+**CRM Page:** `src/app/crm/page.tsx` — botão "+ Novo Lead" agora abre o `NovoLeadDialog` em vez de criar lead vazio direto.
+
+**CRM Table:** `src/app/crm/components/crm-table.tsx` — leads com `lead_avulso = true` mostram badge "Avulso" (amarelo) ao lado do nome, com tooltip mostrando a fonte ao passar o mouse.
+
+> **✅ Executado** — colunas `lead_avulso` e `fonte_avulso` criadas em `leads_crm`.
+
+### 2026-04-18 — Módulo Produtividade (/time/produtividade)
+
+Nova página com navegação "Geral" | "Individual" e seção de configuração.
+
+**Visão Geral:**
+- Cards de status em tempo real por colaborador (verde=ativo, cinza=inativo, badge alerta inatividade)
+- KPIs filtráveis (hoje/semana/mês): horas do time, média/colab, tarefas concluídas
+- Donut chart de distribuição por tipo de tarefa (Recharts)
+- Ranking de produtividade: horas, tarefas, % meta (cap visual 100%, tooltip valor real)
+- Alertas de inatividade (seg-sex) baseados em `alerta_inatividade_horas` de cada employee
+
+**Visão Individual:**
+- Select de colaborador → reutiliza estrutura do "Meu Tempo"
+- Comparativo semana atual vs anterior com variação %
+- Gráfico de linha 30 dias (Recharts) com referência meta diária
+- Donut por tipo + tarefas recentes com timer em tempo real
+
+**Configurações (/config → seção Produtividade):**
+- Meta horas padrão + "Aplicar a todos"
+- Threshold inatividade padrão + "Aplicar a todos"
+- Lista de metas individuais editáveis inline
+- CRUD completo de tipos de tarefa (nome, cor, soft delete)
+
+**Arquivos criados:**
+- `src/app/time/produtividade/page.tsx` — página principal
+- `src/app/api/produtividade/route.ts` — API geral + individual (polling 30s)
+- `src/app/api/produtividade/config/route.ts` — API config CRUD
+- `src/components/produtividade/ProdutividadeConfig.tsx` — componente config
+
+**Arquivos modificados:**
+- `src/components/sidebar.tsx` — item "Produtividade" no menu Comarka Pro
+- `src/app/config/page.tsx` — seção Produtividade adicionada
+
+### 2026-04-18 — Seção "Meu Tempo" no portal do colaborador
+
+**API:** `src/app/api/meu-tempo/route.ts`
+- `GET ?colaborador_id=...` — retorna dados de tempo do colaborador logado: sessões hoje (soma `time_sessions.duracao_segundos` do dia), timer ativo (se `em_andamento = true` em alguma `tarefas_kanban`), meta diária (`meta_horas_semanais / 5`), horas por dia nos últimos 7 dias, distribuição por `tipo_tarefa` nos últimos 30 dias (join com `tarefas_kanban`), 5 tarefas recentes com tempo.
+
+**Página:** `src/app/portal/meu-tempo/page.tsx`
+- **Bloco Hoje:** horas trabalhadas em tempo real, cronômetro acumulando se timer ativo (Play verde pulsante + nome da tarefa), barra de progresso da meta diária com % (cap visual em 100%, valor real no tooltip).
+- **Últimos 7 dias:** gráfico de barras Recharts com horas por dia + linha de referência na meta diária.
+- **Por tipo de tarefa (30 dias):** donut chart Recharts com cores do catálogo `tipo_tarefa_opcoes` + tabela tipo/horas/%.
+- **Tarefas recentes:** lista das 5 últimas com título, badge tipo (cor dinâmica), tempo total formatado, status.
+- Polling a cada 30s para atualizar dados. Timer com `setInterval` de 1s para cronômetro em tempo real.
+
+**Portal Shell:** `src/components/portal-shell.tsx` — tab "Tempo" (ícone Timer) adicionada tanto em `CLOSER_TABS` quanto em `SDR_TABS`, entre "Tarefas" e "Salario".
+
+### 2026-04-18 — Timer por tarefa com time_sessions + tipo de tarefa no Kanban
+
+**Timer por tarefa (Tarefas 1 e 2):**
+- Ao mover para "Fazendo": inicia timer (`em_andamento=true`, `ultimo_inicio=now`) e cria registro em `time_sessions` com `colaborador_id` = responsável da tarefa.
+- Botão de pausa: calcula `duracao_segundos`, fecha sessão em `time_sessions`, acumula em `total_segundos`.
+- Retomar: cria nova `time_session`, reinicia timer.
+- Ao mover para "Concluído": pausa automaticamente se rodando, trava timer (`cronometro_encerrado=true`).
+- No cartão: timer rodando mostra HH:MM:SS em verde; parado mostra "Xh Ym" em cinza; zero não mostra nada.
+- `setInterval` no frontend atualiza a cada segundo — sem polling ao banco.
+
+**Tipo de tarefa (Tarefa 3):**
+- Campo `tipo_tarefa` em `tarefas_kanban`, opções dinâmicas de `tipo_tarefa_opcoes` (nome + cor).
+- Select no formulário de criação e no modal de detalhe.
+- Badge colorido no cartão do kanban (cor vem de `tipo_tarefa_opcoes.cor`).
+- Nova API: `GET /api/tarefas-kanban/tipo-tarefa-opcoes` — lista opções ativas.
+
+**Arquivos modificados:**
+- `src/app/api/tarefas-kanban/route.ts` — lógica de `time_sessions` nos handlers de status e toggle_timer + `tipo_tarefa` no POST
+- `src/app/api/tarefas-kanban/tipo-tarefa-opcoes/route.ts` — novo endpoint GET
+- `src/components/tarefas/tarefas-kanban.tsx` — timer refinado, badge tipo, campo tipo no form/modal
+
+### 2026-04-18 — Kanban: badge de atrasada + modal centralizado de detalhe
+
+**Componente**: `src/components/tarefas/tarefas-kanban.tsx`
+
+**Badge de tarefa atrasada**:
+- Tarefas com `data_vencimento` passada e `status != concluido` exibem badge vermelho "Atrasada" no canto superior direito do card
+- Borda do card fica vermelha (`border-red-500/50`)
+- Cálculo feito no frontend no render (sem campo adicional no banco)
+- Função `isAtrasada(t)`: compara `data_vencimento + T23:59:59` vs `Date.now()`
+
+**Modal centralizado de detalhe (`TarefaDetalheModal`)**:
+- Abre ao clicar em qualquer card do kanban
+- Modal centralizado 80vw × 85vh (não Sheet lateral)
+- Layout em duas colunas:
+  - Esquerda (60%): título editável inline, descrição editável (textarea)
+  - Direita (40%): status (select), responsável (select), solicitante (read-only), cliente (busca com `ClienteSearchDropdown`), data de vencimento, data de criação
+- Autosave com debounce de 1s nos campos título e descrição
+- Campos de select salvam imediatamente ao alterar
+- Fecha ao clicar fora, no X, ou ao salvar
+- Drag & drop do kanban não é afetado
+
+**Portal do Closer (`/portal/painel`)**:
+- Seção "Histórico do Mês" agora inicia minimizada por padrão
+- Header clicável com chevron para expandir/colapsar
+
+**Meu Portal (`/meu-portal`)**:
+- Seção "Portfólio de Clientes Vivos" removida da página (dados intactos no banco)
+
+### 2026-04-18 — Schema do módulo de tempo/produtividade
+
+**Migration:** `migrations/migration-tempo-produtividade.sql`
+
+Alterações em tabelas existentes:
+- **`tarefas`** — novas colunas: `tempo_total_segundos` (int, default 0), `timer_iniciado_em`, `timer_pausado_em` (timestamptz), `timer_rodando` (bool), `tipo_tarefa` (text). A coluna `tipo` já existente (CHECK constraint com valores fixos) foi mantida intacta — `tipo_tarefa` é um campo flexível separado que referencia `tipo_tarefa_opcoes`.
+- **`tarefas_kanban`** — nova coluna: `tipo_tarefa` (text). Timer já existia (`total_segundos`, `em_andamento`, `ultimo_inicio`).
+- **`employees`** — novas colunas: `meta_horas_semanais` (int, default 40), `alerta_inatividade_horas` (int, default 2).
+
+Novas tabelas:
+- **`time_sessions`** — sessões de tempo individuais. Campos: `colaborador_id` (FK→employees), `tarefa_id` (FK→tarefas_kanban ON DELETE CASCADE), `iniciado_em`, `pausado_em`, `duracao_segundos`, `data_referencia` (date). Indexes em colaborador, tarefa e data.
+- **`tipo_tarefa_opcoes`** — catálogo de tipos de tarefa. Campos: `nome` (unique), `cor` (hex), `deleted_at`. Seed automático com 5 tipos: Atendimento (#3b82f6), Criativo (#ec4899), Operacional (#f59e0b), Reunião (#10b981), Estratégia (#8b5cf6).
+
+> **Pendente:** rodar `migrations/migration-tempo-produtividade.sql` no Supabase.
+
+### 2026-04-18 — Página Performance por Nicho & Tese
+
+**Migration:** `migrations/migration-performance-manual.sql` — tabela `performance_manual` (nicho_id, tese_id, cliente_id, mes_referencia, contratos_fechados, faturamento_total) com UNIQUE composto e RLS.
+
+**API:** `src/app/api/performance-nichos/route.ts`
+- `GET ?mes=...&since=...&until=...` — dados agregados de performance por nicho e tese. Investimento da Meta API direta (por campanha), filtrado pelos vínculos confirmados em `campanhas_nichos`. Leads de `leads_crm`. Reuniões de `lancamentos_diarios`. LTV de `contratos`. Dados manuais de `performance_manual`.
+- `PATCH` — upsert de dados manuais em `performance_manual`.
+
+**Página:** `src/app/performance-nichos/page.tsx` — 4 tabs:
+1. **Global** — KPIs (investimento, leads, CPL, reuniões, conversão, ROAS), gráfico barras por nicho, ranking teses por conversão.
+2. **Por Nicho** — select nicho, KPIs filtrados, tabela teses com dados manuais editáveis.
+3. **Por Tese** — select tese, KPIs filtrados, ROAS via faturamento/investimento, dados manuais editáveis.
+4. **Comparar Teses** — multi-select 2–5 teses, tabela comparativa com highlight verde (melhor) e vermelho (pior).
+
+**Alerta não atribuídos:** banner em todas as visões com lista expansível para atribuição manual inline.
+
+**Sidebar:** item "Nichos & Teses" no grupo Dashboard.
+
+> **Pendente:** rodar `migrations/migration-performance-manual.sql` no Supabase.
+
+### 2026-04-18 — Auto-criação de Entrada + Onboarding ao marcar "Comprou" no CRM
+
+Quando um lead é movido para a etapa "Comprou" no CRM, agora **toda a cadeia é criada automaticamente**:
+
+1. **Contrato** — já existia
+2. **Entrada** (`clientes_receita`) — insere com dados do lead (nome, mensalidade, closer, fidelidade). O trigger SQL `trg_entrada_to_clientes_mirror_ins` cria automaticamente o registro em `clientes_notion_mirror` com status "Não iniciado", fazendo o cliente aparecer em `/dashboard/clientes`.
+3. **Onboarding** — cria registro em `onboarding_notion_mirror` (com `notion_id` prefixado `local_`) + `onboarding_tracking` na etapa "Passagem de bastão". Cliente aparece no kanban de `/dashboard/onboarding`.
+
+**Arquivos modificados:**
+- `src/hooks/use-crm-data.ts` — lógica de auto-criação dentro de `mudarEtapa`
+- `src/app/api/notion/onboarding/route.ts` — GET agora mescla itens do Notion com itens locais (`local_*`) do `onboarding_notion_mirror`
+
+**Também atualizado em:** `comarka-operacional` (mesmos 2 arquivos)
+
+### 2026-04-18 — Alertas da página Clientes colapsados por padrão
+
+Os 3 alertas da página de Clientes (feedback vencido, situação piorando, divergência entrada/churn) agora iniciam minimizados por padrão. Cada alerta mostra apenas o header (ícone + título + contagem) e pode ser expandido individualmente com um clique. Estado controlado localmente via `alertasExpandidos` (não persiste no banco).
+
+### 2026-04-18 — Match automático de campanhas Meta + atribuição nicho/tese nos leads
+
+**Migration:** `migrations/migration-leads-nicho-tese.sql` — adiciona `nicho_id` (FK→nichos), `tese_id` (FK→teses) e `atribuicao_manual` (boolean) na tabela `leads_crm`.
+
+**API — Match de campanhas:** `src/app/api/campanhas/match-nichos/route.ts`
+- `GET` — busca campanhas ativas/pausadas da conta `act_2851365261838044` via Meta Marketing API v21.0, verifica vínculos existentes em `campanhas_nichos`, e tenta match automático pelo nome (normaliza lowercase sem acentos, procura nome de nicho E tese dentro do nome da campanha). Retorna listas separadas: `matched` (auto-detectados), `unmatched` (preencher manual), `confirmed` (já confirmados).
+- `PATCH` — confirma ou corrige vínculo (`confirmado = true`).
+
+**API — Atribuição de leads:** `src/app/api/leads/atribuir-nicho/route.ts`
+- `GET` — atribui automaticamente nicho/tese a leads que têm `ad_id` preenchido. Cadeia: `lead.ad_id` → `ads_metadata.campaign_id` → `campanhas_nichos.nicho_id/tese_id` (somente vínculos confirmados). Não sobrescreve atribuições manuais.
+- `PATCH` — atribuição manual de um lead específico (seta `atribuicao_manual = true`).
+
+**UI — Vínculos de Campanhas:** `src/components/campanhas-vinculos.tsx`
+- Adicionado na página de Configurações (`src/app/config/page.tsx`).
+- Botão "Sincronizar Meta" busca campanhas e faz match.
+- Resumo em cards: auto-detectados (amarelo), preencher (vermelho), confirmados (verde).
+- Para auto-detectados: mostra sugestão com botão "Confirmar" e "Corrigir".
+- Para preencher: selects de nicho + tese com botão "Salvar".
+
+**UI — Coluna Nicho/Tese no CRM:** `src/app/crm/components/crm-table.tsx`
+- Nova coluna "_nicho" (Nicho/Tese) na tabela de leads.
+- Leads com nicho atribuído: mostra "Nicho → Tese" em violet.
+- Leads sem nicho: badge "Não atribuído" (vermelho) clicável, abre popover inline com selects de nicho e tese, salva via `atribuicao_manual = true`.
+
+> **Pendente:** rodar `migrations/migration-leads-nicho-tese.sql` no Supabase.
+
+### 2026-04-18 — Catálogo global de Nichos & Teses
+
+**Migration:** `migrations/migration-nichos-teses.sql` — 4 tabelas novas:
+- `nichos` (id, nome unique, deleted_at, created_at)
+- `teses` (id, nicho_id FK→nichos, nome, deleted_at, created_at, unique nicho_id+nome)
+- `clientes_nichos_teses` (id, cliente_id text, nicho_id FK, tese_id FK, deleted_at, unique cliente_id+nicho_id+tese_id)
+- `campanhas_nichos` (id, campaign_id unique, campaign_name, cliente_id, nicho_id FK, tese_id FK, vinculo_automatico, confirmado, deleted_at)
+
+Todas com RLS aberto, soft delete via `deleted_at`, e indexes nos FKs.
+
+**API:** `src/app/api/nichos-teses/route.ts`
+- `GET` — lista catálogo (nichos + teses) ou vínculos de um cliente (`?cliente_id=`)
+- `POST` — action: `criar_nicho`, `criar_tese`, `vincular_cliente`
+- `DELETE` — action: `nicho`, `tese`, `vinculo` (soft delete). Deletar nicho cascata soft-deleta teses e vínculos.
+
+**UI — Página do cliente** (`src/app/dashboard/clientes/[id]/page.tsx`):
+- Novo componente `NichoTesesSection` (`src/components/nicho-teses-section.tsx`) na aba "geral", antes das Teses operacionais.
+- Select de nicho dinâmico + multi-select de teses filtradas por nicho.
+- Botão inline para criar novo nicho e nova tese.
+- Teses já vinculadas aparecem como badges com botão de remover.
+- Mínimo 1 tese obrigatória ao salvar.
+
+**UI — Configurações** (`src/app/config/page.tsx`):
+- Novo componente `NichosTesesConfig` (`src/components/nichos-teses-config.tsx`).
+- Lista todos os nichos cadastrados com expansão para ver teses.
+- Input para adicionar nicho e tese em cada nicho.
+- Botão de remover (soft delete) em nicho e tese.
+
+> **Pendente:** rodar `migrations/migration-nichos-teses.sql` no Supabase.
+
+### 2026-04-18 — Paginação cursor-based no CRM de Leads
+- **`src/hooks/use-crm-data.ts`**: carga inicial agora traz apenas 50 leads (era 2000). Total de leads é obtido via `count: "exact"`. Cursor usa `ghl_created_at` + `id` como desempate para evitar duplicatas.
+- Nova função `loadMore()` busca próximos 50 leads a partir do último cursor carregado. Deduplicação por `id` antes de concatenar ao estado.
+- Mutações otimistas (`updateLead`, `mudarEtapa`, `addNovoLead`, `deleteLead`) agora operam sobre `setAllLeads` (estado local) em vez de `mutate` do SWR (que antes guardava os leads).
+- Real-time via Supabase Realtime reseta cursor e recarrega do início ao detectar mudanças.
+- Hook exporta novos campos: `loadMore`, `hasMore`, `totalCount`, `loadingMore`.
+- **`src/app/crm/page.tsx`**: removida paginação fixa por quantidade (botões 15/30/50/100). Substituída por botão "Carregar mais 50 de X restantes" abaixo da tabela. Mostra "Mostrando N de Total leads". Botão some automaticamente quando todos os leads estão carregados. Filtros, ordenação e busca continuam funcionando nos leads já carregados.
+
+### 2026-04-18 — Fallback Supabase mirror na página de detalhe do cliente
+- **`src/app/api/notion/clientes/[id]/route.ts`**: quando o `notion_id` é `pending_*` ou `local_*` (IDs criados localmente no Supabase, sem correspondência no Notion), busca direto do `clientes_notion_mirror`. Para IDs normais, tenta Notion primeiro e faz fallback para o mirror se falhar. Resolve o bug "Cliente não encontrado" ao clicar no nome do cliente na lista.
+
+### 2026-04-18 — Ajustes no Portal do Closer e Meu Portal
+
+**Portal do Closer (`/portal/painel`)**:
+- Seção "Histórico do Mês" agora inicia **minimizada** por padrão
+- Header clicável com ícone chevron para expandir/colapsar
+- Estado controlado por `useState` (não persiste entre recarregamentos)
+
+**Meu Portal (`/meu-portal`)**:
+- Seção "Portfólio de Clientes Vivos" (tabela de clientes ativos) **removida** da página
+- KPIs de clientes (Meus Clientes Ativos, Orçamento Total, % Bons, Atenção Imediata) **removidos**
+- Alertas de clientes em declínio e feedbacks vencidos **removidos**
+- Dados de clientes permanecem intactos no banco — apenas o componente visual foi removido
+- Kanban de tarefas continua exibido normalmente
+
+### 2026-04-18 — Alertas da página Clientes colapsados por padrão
+
+Os 3 alertas da página de Clientes (feedback vencido, situação piorando, divergência entrada/churn) agora iniciam minimizados por padrão. Cada alerta mostra apenas o header (ícone + título + contagem) e pode ser expandido individualmente com um clique. Estado controlado localmente via `alertasExpandidos` (não persiste no banco).
+
 ### 2026-04-09 — Módulo de Clientes Expandido (Entrada + Churn)
 
 Correção e expansão do módulo de clientes com validação bidirecional entre Entrada e Churn, histórico de status, e verificação automática de consistência.
@@ -2096,7 +2419,7 @@ A página `/closer/[id]` agora tem um card "Lançamento do Dia" no topo. Permite
 - Pré-preenche os campos lendo o lançamento existente para a data escolhida — então funciona tanto para criar quanto para editar.
 - Preserva os campos `ganhos`, `mrr_dia`, `ltv` quando o lançamento já existia (para não zerar dados gravados por outras fontes).
 - Validação: feitas ≤ marcadas.
-- Como `lancamentos_diarios` é a fonte única, a edição alimenta automaticamente: `/closers`, `/sdr`, `/historico`, `/relatorio`, `/hoje`, `/analise-dias`, `/projecoes/metas-closers`, `/dashboard/team/[id]` (bloco "Desempenho Comercial"), `/portal/painel`, `/portal/equipe` etc.
+- Como `lancamentos_diarios` é a fonte única, a edição alimenta automaticamente: `/closers`, `/sdr`, `/historico`, `/relatorio`, `/hoje`, `/analise-dias`, `/dashboard/team/[id]` (bloco "Desempenho Comercial"), `/portal/painel`, `/portal/equipe` etc.
 - Funciona para qualquer closer (existente ou criado depois) sem mudanças, porque a página é dinâmica `[id]`.
 
 ---
@@ -2306,4 +2629,197 @@ Terceira aba em `ClienteExpansao` (`Registrar Feedback`/`Histórico`/**`NPS`**).
 
 ---
 
-*Última atualização: 2026-04-07 (v16 — NPS por cliente, tarefa automática no primeiro mês, página global NPS & Performance)*
+### 20.6 Remoção da página "Metas Closers" do módulo Projeções (6E)
+
+A rota `/projecoes/metas-closers` e seu componente `MetasClosersEvolutionPage` foram removidos da UI. O item "Metas Closers" foi removido do menu lateral (sidebar).
+
+- **Motivo:** consolidação do módulo de Projeções — a funcionalidade de metas por closer já é coberta pela página `/metas`.
+- **O que foi mantido:** a tabela `metas_closers` no Supabase, o endpoint API `POST /api/projecoes/meta-closers` (cron de sugestão via IA) e todas as referências a `metas_closers` em outras páginas (dashboard, closers, metas, portal, etc.).
+- **O que foi removido:** `src/app/projecoes/metas-closers/page.tsx`, entrada no sidebar, import `Zap` não utilizado.
+
+---
+
+## 21. Tarefas Kanban — Responsável/Solicitante por ID, Cliente vinculado e botão inline (7A)
+
+### 21.1 Schema — migration `migrations/migration-tarefas-kanban-ids.sql`
+
+Colunas adicionadas em `tarefas_kanban`:
+- `responsavel_id uuid REFERENCES employees(id)` — referência formal ao colaborador responsável
+- `solicitante_id uuid REFERENCES employees(id)` — quem criou/solicitou a tarefa
+- `cliente_id uuid REFERENCES clientes(id)` — cliente vinculado (opcional)
+- `deleted_at timestamptz DEFAULT NULL` — soft delete (null = ativo)
+- `deleted_by uuid REFERENCES employees(id)` — quem deletou
+
+As colunas de texto (`responsavel`, `solicitante`, `cliente`) continuam existindo para retrocompatibilidade. Novos registros preenchem ambos (ID + nome). Índices criados para todos os novos campos.
+
+> **Pendente:** rodar `migrations/migration-tarefas-kanban-ids.sql` no Supabase.
+
+### 21.2 API `src/app/api/tarefas-kanban/route.ts`
+
+- **GET**: filtra `deleted_at IS NULL` (soft delete). Suporta `?responsavel_id=` além do existente `?responsavel=`.
+- **POST**: aceita `responsavel_id`, `solicitante_id`, `cliente_id`. Resolve nomes automaticamente a partir dos IDs (busca em `employees`/`clientes`) para manter os campos de texto preenchidos. `solicitante_id` é preenchido automaticamente via sessão se não informado.
+- **DELETE**: agora faz soft delete (`deleted_at` + `deleted_by`) em vez de exclusão física.
+- **PATCH**: sem alteração (cronômetro e transições de status mantidos).
+
+Novo endpoint `GET /api/tarefas-kanban/employees` — retorna lista de `employees` ativos com `id, nome, role, cargo, foto_url`.
+
+### 21.3 UI — Formulário de criação
+
+O modal de criação de tarefa (`NovaTarefaModal`) agora:
+- **Solicitante**: campo read-only, preenchido automaticamente com o nome do usuário logado (via `useAuth`). Exibido como texto com ícone de usuário.
+- **Responsável**: select com todos os colaboradores ativos da tabela `employees`, mostrando nome e cargo. Valor padrão: usuário logado. Editável.
+- **Cliente**: campo de busca com dropdown (`ClienteSearchDropdown`). Input de texto com filtragem em tempo real. Dropdown agrupa clientes por status financeiro (Ativos, Planejamento, Pagou Integral, etc.). Campo opcional.
+- Ao salvar: persiste `responsavel_id`, `solicitante_id` e `cliente_id` em `tarefas_kanban`.
+
+### 21.4 UI — Botão inline "+ Adicionar tarefa" no Kanban
+
+Em cada coluna do Kanban (A Fazer, Fazendo, Concluído), abaixo dos cartões:
+- Botão `+ Adicionar tarefa` com estilo discreto (texto muted, borda dashed no hover).
+- Ao clicar: abre o modal de criação com o status pré-selecionado correspondente à coluna.
+- Reutiliza o mesmo `NovaTarefaModal` — sem componente novo de modal.
+
+### 21.5 UI — Cliente no cartão do Kanban
+
+No cartão de cada tarefa no Kanban:
+- Se `cliente` estiver preenchido, mostra o nome do cliente em texto pequeno (10px) roxo abaixo do título.
+- Badge de cliente removido (substituído pelo texto inline mais limpo).
+
+### 21.6 Filtro de responsável
+
+O filtro de responsável no Kanban agora usa a lista de `employees` no select (por ID). Mantém fallback para nomes de texto que não têm match em employees (tarefas antigas). Novo prop `filtroResponsavelId` para filtragem por UUID.
+
+---
+
+## 22. Soft Delete completo e Histórico de Excluídas (7B)
+
+### 22.1 Soft delete em ambas as tabelas
+
+**`tarefas_kanban`**: já tinha `deleted_at` e `deleted_by` da migration anterior. O `DELETE` na API faz `UPDATE SET deleted_at = now(), deleted_by = session.employeeId`. O `GET` filtra `.is("deleted_at", null)`.
+
+**`tarefas`** (sistema legado): colunas `deleted_at` e `deleted_by` adicionadas na mesma migration (`migration-tarefas-kanban-ids.sql`). O `GET /api/tarefas` agora filtra `.is("deleted_at", null)`. O `DELETE /api/tarefas/[id]` faz soft delete em vez de exclusão física.
+
+Ambas as tabelas agora seguem o mesmo padrão: nunca há DELETE físico direto — sempre passa por soft delete primeiro.
+
+### 22.2 API de excluídas `GET/PATCH/DELETE /api/tarefas-kanban/excluidas`
+
+- **GET**: lista tarefas com `deleted_at IS NOT NULL`, ordenadas por `deleted_at DESC`. Enriquece com `deleted_by_nome` (busca em `employees`).
+- **PATCH `{ id }`**: restaura tarefa — zera `deleted_at` e `deleted_by`. Tarefa volta ao Kanban no status original.
+- **DELETE `?id=`**: exclusão permanente (física). Só permite se a tarefa já está na lixeira (`deleted_at IS NOT NULL`).
+
+### 22.3 UI — Lixeira no Kanban
+
+Botão "Lixeira" no header do Kanban (ao lado de "Nova Tarefa"). Toggle entre Kanban e lista de excluídas.
+
+A seção de excluídas (`HistoricoExcluidas`) mostra:
+- Lista de tarefas excluídas com título, responsável, status original, cliente (se houver)
+- Data/hora de exclusão e nome de quem excluiu
+- Botão **Restaurar** — zera `deleted_at`, tarefa volta ao Kanban
+- Botão **Excluir** — exclusão permanente com confirmação (`confirm()`)
+- Estado vazio com ícone Archive e aviso dos 30 dias
+
+### 22.4 Limpeza automática — função SQL `cleanup_tarefas_excluidas()`
+
+Função PL/pgSQL que deleta permanentemente registros com `deleted_at < now() - 30 days` em ambas as tabelas (`tarefas_kanban` e `tarefas`).
+
+Para ativar, agendar via pg_cron no Supabase:
+```sql
+SELECT cron.schedule('cleanup-tarefas-excluidas', '0 3 * * *', $$SELECT cleanup_tarefas_excluidas()$$);
+```
+Ou via n8n com chamada HTTP diária à função.
+
+> **Pendente:** rodar `migrations/migration-tarefas-kanban-ids.sql` no Supabase (inclui as colunas de soft delete em `tarefas` e a função de cleanup).
+
+---
+
+## 23. CRM Tabela — Colunas de contrato e tooltip de score (8A)
+
+### 23.1 Dados de contrato na tabela
+
+O hook `useCrmData` agora faz batch-fetch da tabela `contratos` para todos os leads que possuem `contrato_id`. Os contratos são armazenados num `contratosMap` (Record por ID) e passados ao `CrmTable`.
+
+5 novas colunas adicionadas a `ALL_COLUMNS` (prefixo `(C)` para distinguir dos campos do lead):
+- **Dt Venda (C)** — `contratos.data_fechamento` formato dd/mm/yyyy
+- **Mensal. (C)** — `contratos.mrr` formato R$
+- **Entrada (C)** — `contratos.valor_entrada` formato R$
+- **LTV (C)** — `contratos.valor_total_projeto` formato R$, cor emerald
+- **Meses (C)** — `contratos.meses_contrato`
+
+Para leads sem contrato vinculado (`contrato_id` null ou não encontrado no map), todas as colunas exibem "—". Nunca valores zerados falsos.
+
+As colunas entram no sistema de visibilidade existente (toggle de colunas, auto-hide por sparsity). São ocultadas automaticamente se >70% dos leads não tiverem contrato.
+
+### 23.2 KPIs de contrato
+
+3 novos KPIs no topo da página CRM (grid expandido para 7 colunas em lg):
+- **MRR Contratos** — soma de `contratos.mrr` dos leads visíveis filtrados (cor cyan)
+- **LTV Contratos** — soma de `contratos.valor_total_projeto` (cor emerald)
+- **Ticket Médio LTV** — Total LTV / quantidade de contratos (cor violet)
+
+Os KPIs se recalculam automaticamente quando filtros (aba, closer, busca, canal, score) mudam.
+
+### 23.3 Tooltip de score
+
+Na coluna Score, um ícone (i) ao lado do valor. Ao passar o mouse:
+- Tooltip com breakdown de cada componente do score
+- Formato: `Score: 78/100` seguido de lista com ✓/✗, label e pontuação
+- 10 componentes: Área de atuação (+20), Telefone (+15), Email (+10), Faturamento (+15), Mensalidade (+15), Canal (+5), Funil (+5), Ad atribuído (+5), Closer (+5), Site/Instagram (+5)
+- `leadScore()` agora retorna `breakdown: ScoreBreakdown[]` com `label`, `pts`, `has`
+- Tooltip posicionado com CSS `group-hover/tip:block`, sem dependência de shadcn Tooltip
+
+### 23.4 Performance
+
+Contratos são buscados em batch (uma query com `.in("id", ids)`) após carregar leads. IDs já presentes no mapa são ignorados (dedup). Nenhuma query por lead individual.
+
+---
+
+---
+
+## 24. Projeções — Base histórica selecionável e mapeamento reverso completo (9A)
+
+### 24.1 Seletor de base histórica
+
+Seletor visual no topo da página de Projeções com 3 opções: "Último mês" (1), "Últimos 3 meses" (3), "Últimos 12 meses" (12). Já existia `histPeriod` no state — agora tem UI visível.
+
+Se o período selecionado não tiver dados suficientes (ex: selecionou 12 meses mas só tem 5 com dados), exibe aviso amarelo: "Dados insuficientes para 12 meses — usando 5 meses disponíveis". O campo `histAvg.mesesComDados` indica quantos meses efetivamente têm dados.
+
+### 24.2 Médias históricas expandidas
+
+O `HistoricalAverages` agora calcula usando **taxas ponderadas** (soma total / soma total, não média de médias):
+- `taxaAgendamento` = reuniões marcadas / leads totais do período
+- `taxaNoShow` = (marcadas - feitas) / marcadas (ponderado)
+- `cpl` = spend total / leads totais (ponderado, nunca média simples)
+- `taxaLeadReuniao`, `taxaReuniaoFechamento` = ponderados idem
+
+Novas métricas: `mrrMedio`, `investimentoMedio`, `leadsMedio`, `reunioesMarcadasMedio`, `reunioesFeitasMedio`, `contratosMedio`, `mesesComDados`.
+
+### 24.3 Fonte de dados — `contratos` como fonte de verdade para LTV
+
+A API `/api/projections/summary` (`fetchHistorico`) agora busca a tabela `contratos` por `mes_referencia`. Quando há contratos:
+- **LTV** = soma `contratos.valor_total_projeto` (não mais `leads_crm`)
+- **MRR** = soma `contratos.mrr` (não mais `lancamentos_diarios.mrr_dia`)
+- **Ticket médio** = LTV total / COUNT contratos
+
+Fallback para dados de leads/lançamentos quando não há contratos no mês.
+
+### 24.4 Mapeamento reverso completo
+
+Funil visual com 4 etapas: Leads → Agendamentos → Reuniões Feitas → Contratos, com taxas entre cada etapa.
+
+9 cards projetados, cada um com referência histórica:
+1. **Investimento Tráfego** — ref: invest. médio/mês
+2. **Leads Necessários** — ref: média/mês
+3. **CPL Projetado** — ref: CPL histórico
+4. **Reuniões Agendadas** — ref: média/mês
+5. **Reuniões Feitas** — ref: média/mês
+6. **No-Show Esperado** — taxa % + absoluto / ref: histórico
+7. **CPRF Projetado** — ref: CPRF hist.
+8. **Ticket Médio Esperado** — ref: ticket hist.
+9. **Contratos Necessários** — ref: média/mês
+
+### 24.5 Fórmulas
+
+Contratos = Meta LTV / Ticket médio | Reuniões feitas = Contratos / Taxa conversão | Agendamentos = Reuniões / (1 - NoShow) | Leads = Agendamentos / Taxa agendamento | Investimento = Leads × CPL | CPL proj = Invest / Leads | CPRF proj = Invest / Reuniões feitas.
+
+---
+
+*Última atualização: 2026-04-18 (v20 — projeções base histórica selecionável, mapeamento reverso completo, métricas ponderadas)*

@@ -25,6 +25,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   const body = await req.json();
+
+  // Bloquear desativação se tem tarefas pendentes
+  if (body.ativo === false) {
+    const { count } = await supabase
+      .from("tarefas")
+      .select("id", { count: "exact", head: true })
+      .is("deleted_at", null)
+      .in("status", ["a_fazer", "em_andamento", "fazendo", "backlog"])
+      .or(`responsavel_id.eq.${params.id},responsaveis_ids.cs.{${params.id}}`);
+
+    if (count && count > 0) {
+      return NextResponse.json({
+        error: `Este colaborador possui ${count} tarefa${count > 1 ? "s" : ""} pendente${count > 1 ? "s" : ""}. Reatribua as tarefas antes de desativar.`,
+      }, { status: 400 });
+    }
+  }
+
   if (body.cargo && !canManageCargo(session, body.cargo)) {
     return NextResponse.json({ error: `Você não tem permissão para atribuir o cargo "${body.cargo}"` }, { status: 403 });
   }

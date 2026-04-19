@@ -1,11 +1,12 @@
 "use client";
 
 import { Fragment, useState, useEffect } from "react";
-import { ChevronDown, ChevronRight, Plus, Trash2, ArrowUpDown } from "lucide-react";
-import type { LeadCrm, Closer, Sdr } from "@/types/database";
+import { ChevronDown, ChevronRight, Plus, Trash2, ArrowUpDown, Tag, Info } from "lucide-react";
+import type { LeadCrm, Closer, Sdr, Contrato } from "@/types/database";
 import { formatCurrency } from "@/lib/format";
 import Link from "next/link";
 import { mutate } from "swr";
+import { toast } from "sonner";
 
 const ETAPAS = [
     { key: "oportunidade", label: "Oportunidade", colorClass: "text-muted-foreground bg-muted/50", dot: "bg-muted-foreground" },
@@ -34,6 +35,12 @@ export const ALL_COLUMNS: { key: string; label: string; w: string; title?: strin
     { key: "valor_total_projeto", label: "Total", w: "min-w-[100px]" },
     { key: "data_venda", label: "Dt Venda", w: "min-w-[90px]" },
     { key: "preenchido_em", label: "Criado em", w: "min-w-[90px]" },
+    { key: "_nicho", label: "Nicho/Tese", w: "min-w-[130px]" },
+    { key: "_c_data", label: "Dt Venda (C)", w: "min-w-[90px]", title: "Data de fechamento do contrato" },
+    { key: "_c_mrr", label: "Mensal. (C)", w: "min-w-[90px]", title: "MRR do contrato" },
+    { key: "_c_entrada", label: "Entrada (C)", w: "min-w-[90px]", title: "Valor de entrada do contrato" },
+    { key: "_c_ltv", label: "LTV (C)", w: "min-w-[100px]", title: "Valor total do projeto (contrato)" },
+    { key: "_c_meses", label: "Meses (C)", w: "min-w-[60px]", title: "Meses de contrato" },
 ];
 
 const FUNIL_OPTIONS = ["Sessao Estrategica", "Social Selling", "Webinar", "Aplicacao", "Evento", "Indicacao", "Isca", "Formulario", "Trafego pago"];
@@ -51,19 +58,23 @@ function tempoNaEtapa(lead: LeadCrm): { label: string; days: number; color: stri
     return { label: days === 0 ? "hoje" : `${days} dia${days > 1 ? "s" : ""}`, days, color: "text-muted-foreground" };
 }
 
-export function leadScore(lead: LeadCrm): { score: number; badge: string } {
-    let score = 0;
-    if (lead.area_atuacao) score += 20;
-    if (lead.telefone) score += 15;
-    if (lead.email) score += 10;
-    if (lead.faturamento && Number(lead.faturamento) > 0) score += 15;
-    if (lead.mensalidade && Number(lead.mensalidade) > 0) score += 15;
-    if (lead.canal_aquisicao) score += 5;
-    if (lead.funil) score += 5;
-    if (lead.ad_id) score += 5;
-    if (lead.closer_id) score += 5;
-    if (lead.site || lead.instagram) score += 5;
-    return { score: Math.min(score, 100), badge: score >= 70 ? "🔥" : score >= 40 ? "⚡" : "" };
+interface ScoreBreakdown { label: string; pts: number; has: boolean; }
+
+export function leadScore(lead: LeadCrm): { score: number; badge: string; breakdown: ScoreBreakdown[] } {
+    const items: ScoreBreakdown[] = [
+        { label: "Área de atuação", pts: 20, has: !!lead.area_atuacao },
+        { label: "Telefone", pts: 15, has: !!lead.telefone },
+        { label: "Email", pts: 10, has: !!lead.email },
+        { label: "Faturamento", pts: 15, has: !!(lead.faturamento && Number(lead.faturamento) > 0) },
+        { label: "Mensalidade", pts: 15, has: !!(lead.mensalidade && Number(lead.mensalidade) > 0) },
+        { label: "Canal", pts: 5, has: !!lead.canal_aquisicao },
+        { label: "Funil", pts: 5, has: !!lead.funil },
+        { label: "Ad atribuído", pts: 5, has: !!lead.ad_id },
+        { label: "Closer", pts: 5, has: !!lead.closer_id },
+        { label: "Site/Instagram", pts: 5, has: !!(lead.site || lead.instagram) },
+    ];
+    const score = Math.min(items.reduce((s, i) => s + (i.has ? i.pts : 0), 0), 100);
+    return { score, badge: score >= 70 ? "🔥" : score >= 40 ? "⚡" : "", breakdown: items };
 }
 
 interface CrmTableProps {
@@ -78,22 +89,57 @@ interface CrmTableProps {
     addNovoLead: () => void;
     closers: Closer[];
     sdrs: Sdr[];
+    contratosMap?: Record<string, Contrato>;
 }
 
 export function CrmTable({
     filtered, visibleCount, visibleCols, sortCol, toggleSort,
-    updateLead, mudarEtapa, deleteLead, addNovoLead, closers, sdrs
+    updateLead, mudarEtapa, deleteLead, addNovoLead, closers, sdrs, contratosMap = {}
 }: CrmTableProps) {
     const [editingCell, setEditingCell] = useState<{ rowId: string; col: string } | null>(null);
     const [tempValue, setTempValue] = useState("");
     const [expandedRow, setExpandedRow] = useState<string | null>(null);
     const [openDropdown, setOpenDropdown] = useState<{ rowId: string; col: string } | null>(null);
 
+    // Nicho/Tese catalog + popover state
+    const [nichoCatalog, setNichoCatalog] = useState<{ id: string; nome: string }[]>([]);
+    const [teseCatalog, setTeseCatalog] = useState<{ id: string; nome: string; nicho_id: string }[]>([]);
+    const [nichoPopover, setNichoPopover] = useState<string | null>(null);
+    const [popNicho, setPopNicho] = useState("");
+    const [popTese, setPopTese] = useState("");
+
+    useEffect(() => {
+        fetch("/api/nichos-teses").then((r) => r.json()).then((d) => {
+            setNichoCatalog(d.nichos || []);
+            setTeseCatalog(d.teses || []);
+        }).catch(() => {});
+    }, []);
+
+    const salvarNichoLead = async (leadId: string) => {
+        if (!popNicho || !popTese) { toast.error("Selecione nicho e tese"); return; }
+        const res = await fetch("/api/leads/atribuir-nicho", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lead_id: leadId, nicho_id: popNicho, tese_id: popTese }),
+        });
+        const data = await res.json();
+        if (data.error) { toast.error(data.error); return; }
+        // Otimista: atualizar via updateLead
+        await updateLead(leadId, "nicho_id" as keyof LeadCrm, popNicho);
+        await updateLead(leadId, "tese_id" as keyof LeadCrm, popTese);
+        setNichoPopover(null);
+        toast.success("Nicho/tese atribuídos");
+    };
+
+    const nichoNome = (id: string | null) => nichoCatalog.find((n) => n.id === id)?.nome || null;
+    const teseNome = (id: string | null) => teseCatalog.find((t) => t.id === id)?.nome || null;
+
     useEffect(() => {
         const h = (e: MouseEvent) => {
             const target = e.target as HTMLElement;
-            if (target.closest("[data-dropdown-menu]") || target.closest("[data-dropdown-trigger]")) return;
+            if (target.closest("[data-dropdown-menu]") || target.closest("[data-dropdown-trigger]") || target.closest("[data-nicho-popover]")) return;
             setOpenDropdown(null);
+            setNichoPopover(null);
         };
         document.addEventListener("mousedown", h);
         return () => document.removeEventListener("mousedown", h);
@@ -161,7 +207,16 @@ export function CrmTable({
                                             <ChevronRight size={14} />
                                         </button>
                                     </td>
-                                    {visibleCols.has("nome") && <td className="px-3 py-2.5 font-medium"><EditCell lead={lead} col="nome" /></td>}
+                                    {visibleCols.has("nome") && <td className="px-3 py-2.5 font-medium">
+                                        <div className="flex items-center gap-1.5">
+                                            <EditCell lead={lead} col="nome" />
+                                            {(lead as any).lead_avulso && (
+                                                <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[8px] font-semibold bg-yellow-500/15 text-yellow-400 border border-yellow-500/20 cursor-help" title={`Fonte: ${(lead as any).fonte_avulso || "—"}`}>
+                                                    Avulso
+                                                </span>
+                                            )}
+                                        </div>
+                                    </td>}
                                     {visibleCols.has("etapa") && <td className="px-3 py-2.5 relative">
                                         <button
                                             data-dropdown-trigger
@@ -183,7 +238,27 @@ export function CrmTable({
                                         {(() => { const t = tempoNaEtapa(lead); return <span className={`font-medium ${t.color}`}>{t.label}</span>; })()}
                                     </td>}
                                     {visibleCols.has("_score") && <td className="px-3 py-2.5 text-xs">
-                                        {(() => { const s = leadScore(lead); return <span className="font-mono bg-muted/50 px-1.5 py-0.5 rounded tracking-tighter text-[11px]">{s.badge && <span className="mr-0.5">{s.badge}</span>}{s.score}</span>; })()}
+                                        {(() => {
+                                            const s = leadScore(lead);
+                                            return (
+                                                <span className="font-mono bg-muted/50 px-1.5 py-0.5 rounded tracking-tighter text-[11px] inline-flex items-center gap-1">
+                                                    {s.badge && <span>{s.badge}</span>}{s.score}
+                                                    <span className="relative group/tip">
+                                                        <Info size={10} className="text-muted-foreground/50 cursor-help" />
+                                                        <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-52 bg-popover border border-border rounded-lg shadow-xl p-3 text-[10px] hidden group-hover/tip:block z-[70]">
+                                                            <p className="font-bold text-foreground mb-1.5">Score: {s.score}/100</p>
+                                                            {s.breakdown.map((b) => (
+                                                                <div key={b.label} className={`flex items-center gap-1 py-0.5 ${b.has ? "text-foreground" : "text-muted-foreground/50"}`}>
+                                                                    <span>{b.has ? "✓" : "✗"}</span>
+                                                                    <span className="flex-1">{b.label}</span>
+                                                                    <span className="font-mono">{b.has ? `+${b.pts}` : "0"}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </span>
+                                                </span>
+                                            );
+                                        })()}
                                     </td>}
                                     {visibleCols.has("closer_id") && <td className="px-3 py-2.5">
                                         {/* Deep-link Closer! */}
@@ -204,6 +279,57 @@ export function CrmTable({
                                     {visibleCols.has("preenchido_em") && <td className="px-3 py-2.5 text-xs text-muted-foreground">
                                         {lead.preenchido_em ? new Date(lead.preenchido_em).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" }) : "—"}
                                     </td>}
+                                    {visibleCols.has("_nicho") && <td className="px-3 py-2.5 text-xs relative">
+                                        {(lead as any).nicho_id ? (
+                                            <span className="text-[10px]">
+                                                <span className="font-medium text-violet-400">{nichoNome((lead as any).nicho_id) || "—"}</span>
+                                                {(lead as any).tese_id && <span className="text-muted-foreground"> → {teseNome((lead as any).tese_id)}</span>}
+                                            </span>
+                                        ) : (
+                                            <>
+                                                <button
+                                                    data-dropdown-trigger
+                                                    onClick={() => { setNichoPopover(nichoPopover === lead.id ? null : lead.id); setPopNicho(""); setPopTese(""); }}
+                                                    className="px-2 py-0.5 rounded-full text-[9px] font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-all"
+                                                >
+                                                    Não atribuído
+                                                </button>
+                                                {nichoPopover === lead.id && (
+                                                    <div data-nicho-popover className="absolute top-full right-0 z-[60] mt-1 bg-card border rounded-lg p-3 min-w-[220px] shadow-xl animate-in fade-in zoom-in-95 space-y-2">
+                                                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-1"><Tag size={10} /> Atribuir nicho</p>
+                                                        <select value={popNicho} onChange={(e) => { setPopNicho(e.target.value); setPopTese(""); }}
+                                                            className="w-full text-[11px] bg-transparent border rounded px-2 py-1.5">
+                                                            <option value="">Nicho...</option>
+                                                            {nichoCatalog.map((n) => <option key={n.id} value={n.id}>{n.nome}</option>)}
+                                                        </select>
+                                                        {popNicho && (
+                                                            <select value={popTese} onChange={(e) => setPopTese(e.target.value)}
+                                                                className="w-full text-[11px] bg-transparent border rounded px-2 py-1.5">
+                                                                <option value="">Tese...</option>
+                                                                {teseCatalog.filter((t) => t.nicho_id === popNicho).map((t) => <option key={t.id} value={t.id}>{t.nome}</option>)}
+                                                            </select>
+                                                        )}
+                                                        <button onClick={() => salvarNichoLead(lead.id)}
+                                                            disabled={!popNicho || !popTese}
+                                                            className="w-full text-[10px] font-semibold bg-primary text-primary-foreground rounded py-1.5 disabled:opacity-40 hover:bg-primary/90 transition-all">
+                                                            Salvar
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+                                    </td>}
+                                    {/* Contrato columns */}
+                                    {(() => {
+                                        const c = lead.contrato_id ? contratosMap[lead.contrato_id] : null;
+                                        return (<>
+                                            {visibleCols.has("_c_data") && <td className="px-3 py-2.5 text-xs text-muted-foreground">{c?.data_fechamento ? new Date(c.data_fechamento + "T12:00:00").toLocaleDateString("pt-BR") : "—"}</td>}
+                                            {visibleCols.has("_c_mrr") && <td className="px-3 py-2.5 text-xs font-mono">{c ? formatCurrency(Number(c.mrr) || 0) : "—"}</td>}
+                                            {visibleCols.has("_c_entrada") && <td className="px-3 py-2.5 text-xs font-mono">{c ? formatCurrency(Number(c.valor_entrada) || 0) : "—"}</td>}
+                                            {visibleCols.has("_c_ltv") && <td className="px-3 py-2.5 text-xs font-mono text-emerald-400">{c ? formatCurrency(Number(c.valor_total_projeto) || 0) : "—"}</td>}
+                                            {visibleCols.has("_c_meses") && <td className="px-3 py-2.5 text-xs font-mono">{c ? c.meses_contrato : "—"}</td>}
+                                        </>);
+                                    })()}
                                     <td className="px-2 py-2.5">
                                         <button onClick={() => deleteLead(lead.id)} className="w-6 h-6 flex items-center justify-center text-muted-foreground/30 hover:text-rose-500 hover:bg-rose-500/10 rounded transition-colors opacity-0 group-hover:opacity-100">
                                             <Trash2 size={12} />

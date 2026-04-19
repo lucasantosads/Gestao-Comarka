@@ -136,20 +136,26 @@ async function fetchHistorico(mesesAtras: number) {
   const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0);
   const until = `${mes}-${String(lastDay.getDate()).padStart(2, "0")}`;
 
-  const [{ data: config }, { data: lancamentos }, { data: leads }, { data: adsPerf }] = await Promise.all([
+  const [{ data: config }, { data: lancamentos }, { data: leads }, { data: adsPerf }, { data: contratosData }] = await Promise.all([
     supabase.from("config_mensal").select("leads_totais,investimento").eq("mes_referencia", mes).single(),
     supabase.from("lancamentos_diarios").select("reunioes_marcadas,reunioes_feitas,ganhos,mrr_dia,ltv").eq("mes_referencia", mes),
     supabase.from("leads_crm").select("etapa,valor_total_projeto").eq("mes_referencia", mes),
     supabase.from("ads_performance").select("spend,leads").gte("data_ref", mes + "-01").lte("data_ref", until),
+    supabase.from("contratos").select("mrr,valor_total_projeto,valor_entrada,meses_contrato").eq("mes_referencia", mes),
   ]);
 
   const lanc = lancamentos || [];
   const lds = leads || [];
+  const cts = contratosData || [];
   const marcadas = lanc.reduce((s: number, l: { reunioes_marcadas: number }) => s + l.reunioes_marcadas, 0);
   const feitas = lanc.reduce((s: number, l: { reunioes_feitas: number }) => s + l.reunioes_feitas, 0);
   const ganhos = lanc.reduce((s: number, l: { ganhos: number }) => s + l.ganhos, 0);
-  const mrr = lanc.reduce((s: number, l: { mrr_dia: number }) => s + Number(l.mrr_dia), 0);
-  const ltv = lds.filter((l) => l.etapa === "comprou").reduce((s: number, l: { valor_total_projeto: number }) => s + Number(l.valor_total_projeto || 0), 0);
+  const mrr = cts.length > 0
+    ? cts.reduce((s: number, c: { mrr: number }) => s + Number(c.mrr || 0), 0)
+    : lanc.reduce((s: number, l: { mrr_dia: number }) => s + Number(l.mrr_dia), 0);
+  const ltv = cts.length > 0
+    ? cts.reduce((s: number, c: { valor_total_projeto: number }) => s + Number(c.valor_total_projeto || 0), 0)
+    : lds.filter((l) => l.etapa === "comprou").reduce((s: number, l: { valor_total_projeto: number }) => s + Number(l.valor_total_projeto || 0), 0);
 
   // Use Meta Ads data when available, fallback to config_mensal
   const metaSpend = (adsPerf || []).reduce((s: number, r: { spend: number }) => s + Number(r.spend), 0);
@@ -168,7 +174,9 @@ async function fetchHistorico(mesesAtras: number) {
     contratos: ganhos,
     mrr,
     ltv,
-    ticketMedio: ganhos > 0 ? mrr / ganhos : 0,
+    ticketMedio: cts.length > 0
+      ? ltv / cts.length
+      : (ganhos > 0 ? mrr / ganhos : 0),
     cpl: safe(investimento, totalLeads),
     taxaNoShow: safe(marcadas - feitas, marcadas),
     taxaFechamento: safe(ganhos, feitas),

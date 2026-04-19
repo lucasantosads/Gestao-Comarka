@@ -24,10 +24,18 @@ export interface HistoricalAverages {
   ticketMedio: number;
   taxaLeadReuniao: number;     // % de leads que viram reunião feita (direto)
   taxaReuniaoFechamento: number; // % de reuniões feitas que viram contrato (direto)
+  taxaAgendamento: number;     // % de leads que viram reunião agendada
   taxaNoShow: number;
   cpl: number;
   cac: number;                  // custo por aquisição de cliente
   custoPorReuniao: number;      // investimento / reuniões feitas
+  mrrMedio: number;             // MRR médio fechado por mês
+  investimentoMedio: number;    // Investimento médio mensal (Meta API)
+  leadsMedio: number;           // Leads médios por mês
+  reunioesMarcadasMedio: number;
+  reunioesFeitasMedio: number;
+  contratosMedio: number;       // Contratos médios por mês
+  mesesComDados: number;        // Quantos meses efetivamente têm dados
 }
 
 export interface FinancialGoals {
@@ -78,16 +86,25 @@ export function useProjectionData(goals: FinancialGoals, overrides: MetricOverri
   // Historical averages — using DIRECT observed rates, based on selected period
   const histAvg = useMemo((): HistoricalAverages => {
     const months = allMeses.slice(0, histPeriod).filter(Boolean) as HistData[];
+    const n = months.length;
 
-    if (months.length === 0) {
+    if (n === 0) {
       return {
         ticketMedio: 1800,
-        taxaLeadReuniao: 0.08,          // 8% leads → reunião feita
-        taxaReuniaoFechamento: 0.25,    // 25% reunião → fechamento
+        taxaLeadReuniao: 0.08,
+        taxaReuniaoFechamento: 0.25,
+        taxaAgendamento: 0.15,
         taxaNoShow: 0.20,
         cpl: 50,
         cac: 2500,
         custoPorReuniao: 625,
+        mrrMedio: 0,
+        investimentoMedio: 0,
+        leadsMedio: 0,
+        reunioesMarcadasMedio: 0,
+        reunioesFeitasMedio: 0,
+        contratosMedio: 0,
+        mesesComDados: 0,
       };
     }
 
@@ -96,26 +113,41 @@ export function useProjectionData(goals: FinancialGoals, overrides: MetricOverri
       return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
     };
 
-    // Taxa direta: leads → reunião feita
-    const taxaLeadReuniao = avg((m) => m.leads > 0 ? m.reunioesFeitas / m.leads : 0) || 0.08;
+    // Totals for weighted calculations
+    const totalLeads = months.reduce((s, m) => s + m.leads, 0);
+    const totalSpend = months.reduce((s, m) => s + m.investimento, 0);
+    const totalMarcadas = months.reduce((s, m) => s + m.reunioesAgendadas, 0);
+    const totalFeitas = months.reduce((s, m) => s + m.reunioesFeitas, 0);
+    const totalContratos = months.reduce((s, m) => s + m.contratos, 0);
+    const totalMrr = months.reduce((s, m) => s + m.mrr, 0);
+    const totalLtv = months.reduce((s, m) => s + m.ltv, 0);
 
-    // Taxa direta: reunião feita → contrato fechado
-    const taxaReuniaoFechamento = avg((m) => m.reunioesFeitas > 0 ? m.contratos / m.reunioesFeitas : 0) || 0.25;
-
-    // CAC = investimento / contratos
-    const cac = avg((m) => m.contratos > 0 ? m.investimento / m.contratos : 0) || 2500;
-
-    // Custo por reunião = investimento / reuniões feitas
-    const custoPorReuniao = avg((m) => m.reunioesFeitas > 0 ? m.investimento / m.reunioesFeitas : 0) || 625;
+    // Weighted rates (ponderado, não média simples)
+    const taxaLeadReuniao = totalLeads > 0 ? totalFeitas / totalLeads : 0.08;
+    const taxaReuniaoFechamento = totalFeitas > 0 ? totalContratos / totalFeitas : 0.25;
+    const taxaAgendamento = totalLeads > 0 ? totalMarcadas / totalLeads : 0.15;
+    const taxaNoShow = totalMarcadas > 0 ? (totalMarcadas - totalFeitas) / totalMarcadas : 0.20;
+    const cpl = totalLeads > 0 ? totalSpend / totalLeads : 50;
+    const cac = totalContratos > 0 ? totalSpend / totalContratos : 2500;
+    const custoPorReuniao = totalFeitas > 0 ? totalSpend / totalFeitas : 625;
+    const ticketMedio = totalContratos > 0 ? totalLtv / totalContratos : (avg((m) => m.ticketMedio) || 1800);
 
     return {
-      ticketMedio: avg((m) => m.ticketMedio) || 1800,
+      ticketMedio,
       taxaLeadReuniao,
       taxaReuniaoFechamento,
-      taxaNoShow: avg((m) => m.taxaNoShow) || 0.20,
-      cpl: avg((m) => m.cpl) || 50,
+      taxaAgendamento,
+      taxaNoShow,
+      cpl,
       cac,
       custoPorReuniao,
+      mrrMedio: n > 0 ? totalMrr / n : 0,
+      investimentoMedio: n > 0 ? totalSpend / n : 0,
+      leadsMedio: n > 0 ? totalLeads / n : 0,
+      reunioesMarcadasMedio: n > 0 ? totalMarcadas / n : 0,
+      reunioesFeitasMedio: n > 0 ? totalFeitas / n : 0,
+      contratosMedio: n > 0 ? totalContratos / n : 0,
+      mesesComDados: n,
     };
   }, [allMeses, histPeriod]);
 
@@ -124,6 +156,7 @@ export function useProjectionData(goals: FinancialGoals, overrides: MetricOverri
     ticketMedio: (overrides.ticketMedio !== null && overrides.ticketMedio > 0) ? overrides.ticketMedio : histAvg.ticketMedio,
     taxaLeadReuniao: (overrides.taxaLeadReuniao !== null && overrides.taxaLeadReuniao > 0) ? overrides.taxaLeadReuniao : histAvg.taxaLeadReuniao,
     taxaReuniaoFechamento: (overrides.taxaReuniaoFechamento !== null && overrides.taxaReuniaoFechamento > 0) ? overrides.taxaReuniaoFechamento : histAvg.taxaReuniaoFechamento,
+    taxaAgendamento: histAvg.taxaAgendamento,
     taxaNoShow: overrides.taxaNoShow !== null ? overrides.taxaNoShow : histAvg.taxaNoShow,
     cpl: (overrides.cpl !== null && overrides.cpl > 0) ? overrides.cpl : histAvg.cpl,
     cac: (overrides.cac !== null && overrides.cac > 0) ? overrides.cac : histAvg.cac,
@@ -170,8 +203,11 @@ export function useProjectionData(goals: FinancialGoals, overrides: MetricOverri
     const entradaPorCliente = clientesNecessarios > 0 ? entrada / clientesNecessarios : 0;
     const reunioesPerdidas = agendamentosNecessarios - reunioesNecessarias;
 
-    // Custo por reunião projetado
-    const custoPorReuniaoProj = reunioesNecessarias > 0 ? budgetNecessario / reunioesNecessarias : 0;
+    // Custo por reunião feita projetado (CPRF)
+    const custoPorReuniaoProj = reunioesNecessarias > 0 ? budgetViaCPL / reunioesNecessarias : 0;
+
+    // CPL projetado (deve bater com histórico)
+    const cplProjetado = leadsNecessarios > 0 ? budgetViaCPL / leadsNecessarios : 0;
 
     return {
       clientesExatos,
@@ -189,6 +225,7 @@ export function useProjectionData(goals: FinancialGoals, overrides: MetricOverri
       faturamentoPorCliente,
       entradaPorCliente,
       custoPorReuniaoProj,
+      cplProjetado,
     };
   }, [goals, effective]);
 

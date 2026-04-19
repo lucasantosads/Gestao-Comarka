@@ -5,13 +5,14 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { BarChart3, Users, Wallet, User, LogOut, AlertTriangle, Check, ClipboardList } from "lucide-react";
+import { BarChart3, Users, Wallet, User, LogOut, AlertTriangle, Check, ClipboardList, Timer } from "lucide-react";
 import { NotificationBell } from "./notification-bell";
 
 const CLOSER_TABS = [
   { href: "/portal/painel", label: "Painel", icon: BarChart3 },
   { href: "/portal/meus-leads", label: "Leads", icon: Users },
   { href: "/portal/tarefas", label: "Tarefas", icon: ClipboardList },
+  { href: "/portal/meu-tempo", label: "Tempo", icon: Timer },
   { href: "/portal/salario", label: "Salario", icon: Wallet },
   { href: "/portal/equipe", label: "Equipe", icon: Users },
   { href: "/portal/meu-perfil", label: "Perfil", icon: User },
@@ -21,6 +22,7 @@ const SDR_TABS = [
   { href: "/portal/painel-sdr", label: "Painel", icon: BarChart3 },
   { href: "/portal/meus-leads-sdr", label: "Pipeline", icon: Users },
   { href: "/portal/tarefas", label: "Tarefas", icon: ClipboardList },
+  { href: "/portal/meu-tempo", label: "Tempo", icon: Timer },
   { href: "/portal/salario", label: "Salario", icon: Wallet },
   { href: "/portal/equipe", label: "Equipe", icon: Users },
   { href: "/portal/meu-perfil", label: "Perfil", icon: User },

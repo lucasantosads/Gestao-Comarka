@@ -7,10 +7,10 @@ import {
   Briefcase, Wallet, Megaphone, Target,
   ChevronDown, ChevronRight,
   BarChart3, Shield, CalendarDays, FileText,
-  Eye, Zap, Brain, TrendingUp,
+  Eye, Brain, TrendingUp,
   UserCheck, UserCog, CheckSquare,
   DollarSign, Receipt, PenLine, FileBarChart, PiggyBank, CreditCard,
-  MonitorPlay, Search, Video, Layers, Radio, BarChart2, AlertCircle, Lightbulb, Palette, Clock,
+  MonitorPlay, Search, Video, Layers, Radio, BarChart2, AlertCircle, Lightbulb, Palette, Clock, Tag,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -28,13 +28,14 @@ interface MenuItem {
 export const menuItems: MenuItem[] = [
   {
     href: "/dashboard", label: "Dashboard", icon: LayoutDashboard,
-    paths: ["/dashboard", "/hoje", "/relatorio"],
+    paths: ["/dashboard", "/hoje", "/relatorio", "/performance-nichos"],
     children: [
       { href: "/dashboard", label: "Visão Geral", icon: Eye, paths: ["/dashboard"] },
       { href: "/hoje", label: "Hoje", icon: CalendarDays, paths: ["/hoje"] },
       { href: "/relatorio", label: "Relatório", icon: FileText, paths: ["/relatorio"] },
       { href: "/dashboard/clientes", label: "Clientes", icon: Users, paths: ["/dashboard/clientes"] },
       { href: "/dashboard/clientes/performance", label: "Performance", icon: BarChart3, paths: ["/dashboard/clientes/performance"] },
+      { href: "/performance-nichos", label: "Nichos & Teses", icon: Tag, paths: ["/performance-nichos"] },
       { href: "/dashboard/onboarding", label: "Onboarding", icon: Layers, paths: ["/dashboard/onboarding"] },
       { href: "/dashboard/tarefas", label: "Tarefas", icon: CheckSquare, paths: ["/dashboard/tarefas"] },
     ],
@@ -81,7 +82,6 @@ export const menuItems: MenuItem[] = [
     paths: ["/projecoes"],
     children: [
       { href: "/projecoes", label: "Geral", icon: TrendingUp, paths: ["/projecoes"] },
-      { href: "/projecoes/metas-closers", label: "Metas Closers", icon: Zap, paths: ["/projecoes/metas-closers"] },
     ],
   },
   {
@@ -100,11 +100,12 @@ export const menuItems: MenuItem[] = [
   },
   {
     href: "/time/comarka-pro", label: "Comarka Pro", icon: Target,
-    paths: ["/time/comarka-pro"],
+    paths: ["/time/comarka-pro", "/time/produtividade"],
     children: [
       { href: "/time/comarka-pro", label: "Meus Pontos", icon: Eye, paths: ["/time/comarka-pro"] },
       { href: "/time/comarka-pro/ranking", label: "Ranking", icon: BarChart3, paths: ["/time/comarka-pro/ranking"] },
       { href: "/time/comarka-pro/admin", label: "Admin", icon: Shield, paths: ["/time/comarka-pro/admin"] },
+      { href: "/time/produtividade", label: "Produtividade", icon: Clock, paths: ["/time/produtividade"] },
     ],
   },
 ];

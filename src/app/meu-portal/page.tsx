@@ -110,48 +110,7 @@ export default function MeuPortalPage() {
         )}
       </AnimatePresence>
 
-      {clientes.length > 0 ? (
-        <Card className="bg-card shadow-sm border-border max-w-full overflow-hidden">
-          <div className="px-5 py-4 border-b border-border/50 bg-muted/20 flex items-center justify-between">
-            <h2 className="text-sm font-semibold tracking-tight">Portfólio de Clientes Vivos</h2>
-            <Badge variant="secondary" className="bg-primary/20 text-primary hover:bg-primary/30 transition-colors cursor-default text-[10px] px-2 py-0.5 rounded-full">{clientes.length} Operações</Badge>
-          </div>
-          <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead>
-                <tr className="border-b border-border/60 bg-muted/10">
-                  <th className="py-3 px-5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Cliente</th>
-                  <th className="py-3 px-3 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold text-center">Status</th>
-                  <th className="py-3 px-3 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold text-center">Situação HSL</th>
-                  <th className="py-3 px-3 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold text-center">Resultados</th>
-                  <th className="py-3 px-5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold text-right">Lifetime Budget</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/30">
-                {clientes.map((c, idx) => (
-                  <tr key={c.notion_id || idx} className="hover:bg-muted/10 transition-colors group">
-                    <td className="py-3 px-5 font-medium flex items-center gap-2">
-                      <Link href={`/dashboard/clientes/${c.notion_id}`} className="hover:underline hover:text-primary transition-colors">{c.nome}</Link>
-                      <ArrowRight size={12} className="opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-muted-foreground" />
-                    </td>
-                    <td className="py-3 px-3 text-center"><Badge className="bg-muted text-muted-foreground font-medium text-[9px] pointer-events-none">{c.status}</Badge></td>
-                    <td className="py-3 px-3 text-center"><Badge variant="outline" className={`text-[9px] pointer-events-none border-t-transparent border-l-transparent border-r-transparent border-b-2 rounded-none ${c.situacao === 'Piorando' ? 'text-orange-400 border-b-orange-500/50' : 'text-slate-300 border-b-slate-500/50'}`}>{c.situacao}</Badge></td>
-                    <td className="py-3 px-3 text-center"><Badge className={`text-[9px] font-bold tracking-wider ${c.resultados === 'Ótimos' ? 'bg-emerald-500/20 text-emerald-400' : c.resultados === 'Bons' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-muted text-muted-foreground'}`}>{c.resultados}</Badge></td>
-                    <td className="py-3 px-5 text-right font-mono text-muted-foreground">{c.orcamento ? formatCurrency(Number(c.orcamento)) : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
-      ) : (
-        !loadingMember && (
-          <div className="w-full rounded-2xl border border-dashed border-border/50 py-16 flex flex-col items-center justify-center gap-2 text-muted-foreground">
-            <Briefcase size={32} className="opacity-50" />
-            <p className="text-sm font-medium">Nenhum cliente ativo mapeado no seu portfólio no momento.</p>
-          </div>
-        )
-      )}
+      {/* Seção de Clientes Ativos removida conforme solicitação */}
 
       {loadingMember && (
         <div className="w-full flex items-center justify-center py-6 gap-2">

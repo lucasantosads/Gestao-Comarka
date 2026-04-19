@@ -7,6 +7,9 @@ interface AuthUser {
   role: "admin" | "closer" | "sdr";
   entityId: string | null;
   nome: string;
+  nivel_acesso?: "admin" | "colaborador";
+  cargo?: string;
+  notificacoes_pendentes?: number;
 }
 
 interface AuthContextType {

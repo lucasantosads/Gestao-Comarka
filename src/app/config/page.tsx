@@ -17,6 +17,9 @@ import { RefreshCw, Save, HardDrive, Settings2, Users, ArrowUpRight, Cpu, AlertT
 import { useConfigGlobal } from "@/hooks/use-config-swr";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
+import { NichosTesesConfig } from "@/components/nichos-teses-config";
+import { CampanhasVinculos } from "@/components/campanhas-vinculos";
+import { ProdutividadeConfig } from "@/components/produtividade/ProdutividadeConfig";
 
 interface AIStatus { provider: string; status: "ok" | "sem_creditos" | "erro" | "sem_chave"; mensagem: string; latencia?: number }
 
@@ -289,6 +292,21 @@ export default function ConfigPage() {
               </div>
             </CardContent>
           </Card>
+        </div>
+
+        {/* NICHOS & TESES */}
+        <div className="lg:col-span-4">
+          <NichosTesesConfig />
+        </div>
+
+        {/* VÍNCULOS DE CAMPANHAS */}
+        <div className="lg:col-span-4">
+          <CampanhasVinculos />
+        </div>
+
+        {/* PRODUTIVIDADE */}
+        <div className="lg:col-span-4">
+          <ProdutividadeConfig />
         </div>
 
         {/* LIMITES E QUARENTENA DE TRÁFEGO */}
